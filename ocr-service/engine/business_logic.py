@@ -43,7 +43,7 @@ def validate_humidity(humidity_str: str) -> tuple[float | None, str | None]:
         logger.warning(f"[HUMIDITY-VALIDATION] {msg}")
         return None, msg
 
-    logger.info(f"[HUMIDITY-VALIDATION] {value:.1f}% dentro del rango [{HUMIDITY_MIN}–{HUMIDITY_MAX}%] ✓")
+    logger.info(f"[HUMIDITY-VALIDATION] {value:.1f}% dentro del rango [{HUMIDITY_MIN}–{HUMIDITY_MAX}%]")
     return value, None
 
 def validate_oven_id(oven_id_str: str) -> tuple[str | None, str | None]:
@@ -61,7 +61,7 @@ def validate_oven_id(oven_id_str: str) -> tuple[str | None, str | None]:
         logger.warning(f"[OVEN-VALIDATION] {msg}")
         return None, msg
 
-    logger.info(f"[OVEN-VALIDATION] Horno Nº{val} válido ✓")
+    logger.info(f"[OVEN-VALIDATION] Horno Nº{val} válido")
     return str(val), None
 
 def normalize_caliber(raw_cal: str) -> str | None:

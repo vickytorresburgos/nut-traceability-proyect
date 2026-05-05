@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trazabilidad de Nueces — Lote {{trace_id}}</title>
+  <meta name="description" content="Certificado de trazabilidad del lote {{trace_id}} — Sistema Nut Traceability" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .status-badge { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-950 text-white">
+
+  <!-- Header -->
+  <header class="border-b border-white/10 backdrop-blur-sm bg-white/5 sticky top-0 z-10">
+    <div class="max-w-3xl mx-auto px-4 py-4 flex items-center gap-3">
+      <div>
+        <h1 class="text-lg font-bold text-white leading-tight">Nut Traceability</h1>
+        <p class="text-xs text-emerald-400 font-medium">Certificado de Trazabilidad Digital</p>
+      </div>
+      <div class="ml-auto flex items-center gap-2 bg-emerald-500/20 border border-emerald-500/30
+                  rounded-full px-3 py-1">
+        <div class="w-2 h-2 rounded-full bg-emerald-400 status-badge"></div>
+        <span class="text-xs font-semibold text-emerald-300">VERIFICADO</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8 space-y-6">
+
+    <!-- Trace ID Hero -->
+    <section class="text-center py-6">
+      <p class="text-slate-400 text-sm mb-1">Número de Traza</p>
+      <div id="trace-id"
+           class="text-5xl font-bold tracking-wider text-white mb-2">
+        LF-01
+      </div>
+      <p id="batch-date" class="text-slate-400 text-sm">24 de abril de 2025</p>
+    </section>
+
+    <!-- Datos del Lote -->
+    <section class="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+      <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-4">
+        Datos del Lote
+      </h2>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-white/5 rounded-xl p-4">
+          <p class="text-xs text-slate-500 mb-1">Finca de Origen</p>
+          <p id="farm-name" class="text-base font-semibold text-white">Las Flores</p>
+        </div>
+        <div class="bg-white/5 rounded-xl p-4">
+          <p class="text-xs text-slate-500 mb-1">Tipo de Cosecha</p>
+          <p id="harvest-type" class="text-base font-semibold text-white capitalize">Mecánica</p>
+        </div>
+        <div class="bg-white/5 rounded-xl p-4">
+          <p class="text-xs text-slate-500 mb-1">Humedad</p>
+          <p id="humidity" class="text-base font-semibold text-emerald-400">4.2%</p>
+        </div>
+        <div class="bg-white/5 rounded-xl p-4">
+          <p class="text-xs text-slate-500 mb-1">Horno N°</p>
+          <p id="oven-id" class="text-base font-semibold text-white">12</p>
+        </div>
+        <div class="bg-white/5 rounded-xl p-4">
+          <p class="text-xs text-slate-500 mb-1">Calibre</p>
+          <p id="caliber" class="text-base font-semibold text-white">32-34 mm</p>
+        </div>
+        <div class="bg-white/5 rounded-xl p-4">
+          <p class="text-xs text-slate-500 mb-1">Peso</p>
+          <p id="weight" class="text-base font-semibold text-white">120.0 kg</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Indicador de Calidad -->
+    <section class="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5">
+      <div class="flex items-center gap-3">
+        <div>
+          <p class="font-semibold text-emerald-300">Humedad dentro del rango certificado</p>
+          <p class="text-sm text-slate-400">Rango aceptado: 3.5% – 5.5% · Valor: <span id="hum-badge" class="text-emerald-400 font-bold">4.2%</span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Hash de Integridad -->
+    <section class="bg-white/5 border border-white/10 rounded-2xl p-5">
+      <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">
+        Sello de Integridad SHA-256
+      </h2>
+      <p id="hash-value"
+         class="font-mono text-xs text-slate-300 break-all leading-relaxed
+                bg-black/30 rounded-lg p-3">
+        a3f8c2e1d09b4f7a2e5c8d3b1a6f0e9c2d4b7a8e1f3c5d0b2a9e6f1c4d7b0a8
+      </p>
+      <p class="text-xs text-slate-500 mt-2">
+        Este hash certifica que los datos no han sido modificados desde el registro.
+      </p>
+    </section>
+
+    <!-- QR Code -->
+    <section class="bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
+      <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-4">
+        Código QR de Verificación
+      </h2>
+      <div class="flex justify-center">
+        <div id="qrcode" class="p-4 bg-white rounded-2xl inline-block shadow-2xl"></div>
+      </div>
+      <p id="qr-url" class="mt-4 text-xs text-slate-500 break-all">
+        https://nut-traceability-um.com/batch/LF-01
+      </p>
+    </section>
+
+  </main>
+
+  <footer class="text-center py-8 text-slate-600 text-xs">
+    Sistema de Trazabilidad de Nueces · Universidad de Mendoza · TIF 2025
+  </footer>
+
+  <script>
+    // ── Configuración del batch (reemplazar con datos reales del servidor) ──
+    const batch = {
+      trace_id:     'LF-01',
+      farm_name:    'Las Flores',
+      harvest_type: 'Mecánica',
+      remito_date:  '2025-04-24',
+      oven_id:      '12',
+      humidity:     '4.2%',
+      caliber:      '32-34 mm',
+      weight:       '120.0 kg',
+      sha256_hash:  'a3f8c2e1d09b4f7a2e5c8d3b1a6f0e9c2d4b7a8e1f3c5d0b2a9e6f1c4d7b0a8',
+    };
+
+    // Poblar campos
+    document.getElementById('trace-id').textContent    = batch.trace_id;
+    document.getElementById('farm-name').textContent   = batch.farm_name;
+    document.getElementById('harvest-type').textContent= batch.harvest_type;
+    document.getElementById('humidity').textContent    = batch.humidity;
+    document.getElementById('hum-badge').textContent   = batch.humidity;
+    document.getElementById('oven-id').textContent     = batch.oven_id;
+    document.getElementById('caliber').textContent     = batch.caliber;
+    document.getElementById('weight').textContent      = batch.weight;
+    document.getElementById('hash-value').textContent  = batch.sha256_hash;
+
+    // Fecha legible
+    const d = new Date(batch.remito_date + 'T12:00:00');
+    document.getElementById('batch-date').textContent = d.toLocaleDateString('es-AR', {
+      day: 'numeric', month: 'long', year: 'numeric'
+    });
+
+    // QR Code
+    const qrUrl = `https://nut-traceability-um.com/batch/${batch.trace_id}`;
+    document.getElementById('qr-url').textContent = qrUrl;
+    document.title = `Trazabilidad — Lote ${batch.trace_id}`;
+
+    new QRCode(document.getElementById('qrcode'), {
+      text:          qrUrl,
+      width:         200,
+      height:        200,
+      colorDark:     '#0f172a',
+      colorLight:    '#ffffff',
+      correctLevel:  QRCode.CorrectLevel.H,
+    });
+  </script>
+</body>
+</html>

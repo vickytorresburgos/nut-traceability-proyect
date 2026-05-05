@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Nut Traceability",
+    "slug": "nut-traceability-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0f172a",
+    "splash": {
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.nut.traceability",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Se necesita la cámara para capturar remitos y displays del horno.",
+        "NSPhotoLibraryUsageDescription": "Se necesita acceso para guardar imágenes del proceso."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "package": "com.nut.traceability"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        { "cameraPermission": "La app usa la cámara para escanear remitos y hornos." }
+      ]
+    ],
+    "scheme": "nut-traceability",
+    "extra": {
+      "eas": { "projectId": "your-eas-project-id" }
+    }
+  }
+}

@@ -78,9 +78,9 @@ def process_oven_image(image_path: str) -> OvenData:
     errors: list[str] = []
 
     oven_id = None
-    oven_sec = re.search(r'(?i)ho?r[nh]o?[^0-9\n]*(\d+)', raw_text)
+    oven_sec = re.search(r'(?i)ho?r[nh]o?[^\d]*(\d+)', raw_text)
     if not oven_sec:
-        oven_sec = re.search(r'(?i)h[o0]r.*?(\d+)', raw_text)
+        oven_sec = re.search(r'(?i)h[o0]r[^\d]*(\d+)', raw_text)
     if oven_sec:
         raw_oven = oven_sec.group(1)
         oven_id, oven_err = validate_oven_id(raw_oven)
@@ -90,7 +90,7 @@ def process_oven_image(image_path: str) -> OvenData:
         errors.append("No se detectó el número de horno en la imagen.")
 
     humidity = None
-    hum_sec = re.search(r'(?i)h[uv][\w\s]*d[aá]d[:\s]*(.*?)(?=\r|\n|$)', raw_text)
+    hum_sec = re.search(r'(?i)[h]?[uv][a-záéíóú\s]*d[aá]d[^\d]*(\d+[.,]?\d*\s*%?)', raw_text)
     if not hum_sec:
         hum_sec = re.search(r'(?i)hu[a-z\s]*?(\d+[.,]\d+\s*%?)', raw_text)
 
