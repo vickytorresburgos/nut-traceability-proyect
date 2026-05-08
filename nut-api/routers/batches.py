@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 import uuid
 import json
 
 from database import get_db
-from crud import create_batch, update_batch_oven, update_batch_caliber_and_complete, get_batch
+from crud import create_batch, update_batch_oven, update_batch_caliber_and_complete, get_batch, get_batch_by_trace_number, create_complete_batch
 from services import upload_image_to_storage, extract_data_with_ocr, calculate_sha256
 from core.constants import HARVEST_TYPES, STATUS_PENDING, STATUS_COMPLETED
 
@@ -21,8 +21,11 @@ async def create_batch_remito(
     
     try:
         ocr_result = await extract_data_with_ocr(file_bytes, filename, content_type, "/ocr/remito")
+    except ValueError as e:
+        # OCR procesaró la imagen pero la rechazó (confianza baja, imagen poco clara)
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR Service failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"OCR Service no disponible: {str(e)}")
     
     farm_name = ocr_result.get("farm_name")
     harvest_type = ocr_result.get("harvest_type")
@@ -74,8 +77,10 @@ async def update_batch_oven_endpoint(
     
     try:
         ocr_result = await extract_data_with_ocr(file_bytes, filename, content_type, "/ocr/oven")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR Service failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"OCR Service no disponible: {str(e)}")
         
     oven_id = ocr_result.get("oven_id")
     humidity = ocr_result.get("humidity")
@@ -111,8 +116,10 @@ async def update_batch_caliber_endpoint(
     
     try:
         ocr_result = await extract_data_with_ocr(file_bytes, filename, content_type, "/ocr/caliber")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR Service failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"OCR Service no disponible: {str(e)}")
         
     caliber = ocr_result.get("caliber")
     weight = ocr_result.get("weight")
@@ -159,6 +166,90 @@ async def update_batch_caliber_endpoint(
             "caliber": batch.caliber,
             "weight": batch.weight
         },
+        "images": {
+            "remito": batch.remito_image_url,
+            "oven": batch.oven_image_url,
+            "caliber": batch.caliber_image_url
+        }
+    }
+
+@router.post("/complete")
+async def create_batch_complete(
+    remito_image: UploadFile = File(...),
+    oven_image: UploadFile = File(...),
+    caliber_image: UploadFile = File(...),
+    farm_name: str = Form(...),
+    harvest_type: str = Form(...),
+    remito_date: str = Form(""),
+    oven_id: str = Form(...),
+    humidity: str = Form(...),
+    caliber: str = Form(...),
+    weight: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Upload images to storage
+        remito_bytes = await remito_image.read()
+        remito_ctype = remito_image.content_type or "image/jpeg"
+        remito_filename = f"{uuid.uuid4()}_remito.jpg"
+        remito_url = upload_image_to_storage(remito_filename, remito_bytes, remito_ctype)
+        
+        oven_bytes = await oven_image.read()
+        oven_ctype = oven_image.content_type or "image/jpeg"
+        oven_filename = f"{uuid.uuid4()}_oven.jpg"
+        oven_url = upload_image_to_storage(oven_filename, oven_bytes, oven_ctype)
+        
+        caliber_bytes = await caliber_image.read()
+        caliber_ctype = caliber_image.content_type or "image/jpeg"
+        caliber_filename = f"{uuid.uuid4()}_caliber.jpg"
+        caliber_url = upload_image_to_storage(caliber_filename, caliber_bytes, caliber_ctype)
+        
+        # Create complete batch
+        batch = create_complete_batch(
+            db=db,
+            farm_name=farm_name,
+            harvest_type=harvest_type,
+            remito_date=remito_date,
+            remito_image_url=remito_url,
+            oven_id=oven_id,
+            humidity=humidity,
+            oven_image_url=oven_url,
+            caliber=caliber,
+            weight=weight,
+            caliber_image_url=caliber_url,
+            status=STATUS_COMPLETED
+        )
+        
+        return {
+            "message": "Lote creado exitosamente",
+            "batch_id": batch.id,
+            "trace_number": batch.trace_number,
+            "status": batch.status,
+            "hash": batch.sha256_hash
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/by-trace/{trace_number}")
+async def get_batch_by_trace(
+    trace_number: str,
+    db: Session = Depends(get_db)
+):
+    batch = get_batch_by_trace_number(db, trace_number)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+        
+    return {
+        "trace_id": batch.trace_number,
+        "farm_name": batch.farm_name,
+        "harvest_type": batch.harvest_type,
+        "remito_date": batch.remito_date,
+        "oven_id": batch.oven_id,
+        "humidity": batch.humidity,
+        "caliber": batch.caliber,
+        "weight": batch.weight,
+        "sha256_hash": batch.sha256_hash,
+        "status": batch.status,
         "images": {
             "remito": batch.remito_image_url,
             "oven": batch.oven_image_url,

@@ -17,6 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { SyncStatusBadge } from '../../src/components/SyncStatusBadge';
 import { generateLocalTraceNumber } from '../../src/services/traceGenerator';
+import { runRemitoOcr } from '../../src/services/ocrApi';
 
 const KNOWN_FARMS = [
   'LOS TILOS', 'LAS FLORES', 'LOS ANDES', 'LOS CAPOS',
@@ -30,6 +31,7 @@ export default function ValidateScreen() {
   const [batch, setBatch] = useState<NutBatch | null>(null);
   const [captura, setCaptura] = useState<Captura | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Campos editables
   const [farmName, setFarmName] = useState('');
@@ -44,36 +46,35 @@ export default function ValidateScreen() {
       setCaptura(c);
       
       if (b && c && b.farm_name === '') {
-        // Ejecutar OCR llamando al servicio local (solo en desarrollo / si hay conexión)
         try {
-          const form = new FormData();
-          form.append('image', {
-            uri: c.local_path,
-            name: 'remito.jpg',
-            type: 'image/jpeg',
-          } as any);
+          const ocrData = await runRemitoOcr(c.local_path);
 
-          const apiBase = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.100.10:8080';
-          const ocrUrl = apiBase.replace(':8080', ':8082') + '/ocr/remito';
-
-          const res = await fetch(ocrUrl, { method: 'POST', body: form });
-          if (!res.ok) throw new Error('Error en OCR');
-
-          const ocrData = await res.json();
           const fName = ocrData.farm_name ?? '';
-          const hType = ocrData.harvest_type ?? 'mecanica';
+          const hType = (ocrData.harvest_type as 'manual' | 'mecanica') ?? 'mecanica';
           const parsedDate = ocrData.date ?? '';
 
           setFarmName(fName);
           setHarvestType(hType);
           setDate(parsedDate);
 
-          // Actualizar la DB local para que no vuelva a correr el OCR si el operario sale y entra
-          await db.updateBatchDetails(b.id, fName, hType, parsedDate, b.trace_number || '');
+          // Guardar datos OCR en la DB local SIN asignar trace_number todavía.
+          // El trace_number se genera y asigna en save() cuando el operario confirma.
+          await db.updateBatchOcrData(b.id, fName, hType, parsedDate);
 
+
+          if (ocrData.confidence_alert) {
+            Alert.alert(
+              'Confianza baja',
+              `El OCR procesó la imagen pero con baja confianza (${ocrData.confidence.toFixed(0)}%). ` +
+              'Revisá los datos antes de confirmar.',
+            );
+          }
         } catch (err: any) {
-          console.error("Error al ejecutar OCR:", err);
-          Alert.alert('Error de Conexión', `No se pudo contactar al motor OCR. Verificá que estés conectado a la red local.\nDetalle: ${err.message}`);
+          console.error('Error al ejecutar OCR:', err);
+          Alert.alert(
+            'Error al leer el remito',
+            err.message ?? 'No se pudo contactar al motor OCR. Verificá que estés conectado a la red local.',
+          );
         }
       } else if (b) {
         setFarmName(b.farm_name ?? '');
@@ -104,23 +105,26 @@ export default function ValidateScreen() {
   };
 
   const save = async () => {
-    if (!batch) return;
-    
-    // Generar el trace number local definitivo basado en la finca seleccionada
-    const finalTraceNumber = await generateLocalTraceNumber(farmName.toUpperCase());
+    if (!batch || isSaving) return;
+    setIsSaving(true);
+    try {
+      // Generar el trace number local definitivo basado en la finca seleccionada
+      const finalTraceNumber = await generateLocalTraceNumber(farmName.toUpperCase());
 
-    // Actualizar en SQLite local
-    await db.updateBatchDetails(batch.id, farmName.toUpperCase(), harvestType, date, finalTraceNumber);
+      // Actualizar en SQLite local (ahora sí con el trace_number definitivo)
+      await db.updateBatchDetails(batch.id, farmName.toUpperCase(), harvestType, date, finalTraceNumber);
 
-    // Encolar sincronización con el servidor
-    await db.enqueue(batch.id, 'CREATE_BATCH', {
-      farm_name: farmName.toUpperCase(),
-      harvest_type: harvestType,
-      remito_date: date,
-    });
+      // NOTA: NO encolamos CREATE_BATCH aquí porque el lote completo
+      // se sincroniza de una sola vez en validateCaliber.tsx via createCompleteBatch.
 
-    // Avanzar a la captura del horno pasando el ID del lote
-    router.replace({ pathname: '/camera', params: { type: 'oven', batchId: batch.id } });
+      // Avanzar a la captura del horno pasando el ID del lote
+      router.navigate(`/camera?type=oven&batchId=${batch.id}`);
+    } catch (err: any) {
+      console.error('Error al guardar:', err);
+      Alert.alert('Error', err.message ?? 'No se pudo guardar el lote.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (loading) {
@@ -218,11 +222,18 @@ export default function ValidateScreen() {
 
       {/* Botones */}
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.btnSecondary} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.btnSecondary} onPress={() => router.back()} disabled={isSaving}>
           <Text style={styles.btnSecondaryText}>Retomar foto</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.btnPrimary} onPress={handleConfirm}>
-          <Text style={styles.btnPrimaryText}>Confirmar</Text>
+        <TouchableOpacity
+          style={[styles.btnPrimary, isSaving && { opacity: 0.6 }]}
+          onPress={handleConfirm}
+          disabled={isSaving}
+        >
+          {isSaving
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Text style={styles.btnPrimaryText}>Confirmar</Text>
+          }
         </TouchableOpacity>
       </View>
     </ScrollView>

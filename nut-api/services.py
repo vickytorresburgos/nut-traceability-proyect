@@ -37,7 +37,7 @@ async def extract_data_with_ocr(file_data: bytes, filename: str, content_type: s
     files = {'image': (filename, file_data, content_type)}
     
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, files=files, timeout=120.0)
+        response = await client.post(url, files=files, timeout=180.0)
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail", response.text)

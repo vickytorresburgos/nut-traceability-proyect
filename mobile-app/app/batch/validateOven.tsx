@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
+import { runOvenOcr } from '../../src/services/ocrApi';
 
 export default function ValidateOvenScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,18 +24,8 @@ export default function ValidateOvenScreen() {
 
       if (b && c && !b.oven_id) {
         try {
-          const form = new FormData();
-          form.append('image', {
-            uri: c.local_path, name: 'oven.jpg', type: 'image/jpeg',
-          } as any);
+          const ocrData = await runOvenOcr(c.local_path);
 
-          const apiBase = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.100.10:8080';
-          const ocrUrl = apiBase.replace(':8080', ':8082') + '/ocr/oven';
-
-          const res = await fetch(ocrUrl, { method: 'POST', body: form });
-          if (!res.ok) throw new Error('Error en OCR');
-
-          const ocrData = await res.json();
           const parsedOven = ocrData.oven_id ?? '';
           const parsedHumidity = ocrData.humidity ?? '';
 
@@ -42,9 +33,19 @@ export default function ValidateOvenScreen() {
           setHumidity(parsedHumidity);
 
           await db.updateBatchOven(b.id, parsedOven, parsedHumidity);
+
+          if (ocrData.errors?.length) {
+            Alert.alert(
+              'Datos incompletos',
+              ocrData.errors.join('\n'),
+            );
+          }
         } catch (err: any) {
-          console.error("Error al ejecutar OCR Horno:", err);
-          Alert.alert('Error de Conexión', `No se pudo contactar al motor OCR.\nDetalle: ${err.message}`);
+          console.error('Error al ejecutar OCR Horno:', err);
+          Alert.alert(
+            'Error al leer el horno',
+            err.message ?? 'No se pudo contactar al motor OCR.',
+          );
         }
       } else if (b) {
         setOvenId(b.oven_id ?? '');
@@ -60,11 +61,13 @@ export default function ValidateOvenScreen() {
       return;
     }
     
-    // Encolar sincronización
-    await db.enqueue(id, 'ADD_OVEN', { oven_id: ovenId, humidity });
+    // Guardar datos del horno en SQLite local.
+    // NOTA: NO encolamos ADD_OVEN aqu\u00ed — el lote completo se sincroniza
+    // de una sola vez en validateCaliber.tsx via createCompleteBatch.
+    await db.updateBatchOven(id, ovenId, humidity);
     
     // Continuar a calibre
-    router.replace({ pathname: '/camera', params: { type: 'caliber', batchId: id } });
+    router.navigate(`/camera?type=caliber&batchId=${id}`);
   };
 
   if (loading) {

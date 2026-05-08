@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
+import { runCaliberOcr } from '../../src/services/ocrApi';
+import { createCompleteBatch } from '../../src/services/batchApi';
 
 export default function ValidateCaliberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -10,6 +12,7 @@ export default function ValidateCaliberScreen() {
   const [batch, setBatch] = useState<NutBatch | null>(null);
   const [captura, setCaptura] = useState<Captura | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [caliber, setCaliber] = useState('');
   const [weight, setWeight] = useState('');
@@ -23,18 +26,8 @@ export default function ValidateCaliberScreen() {
 
       if (b && c && !b.caliber) {
         try {
-          const form = new FormData();
-          form.append('image', {
-            uri: c.local_path, name: 'caliber.jpg', type: 'image/jpeg',
-          } as any);
+          const ocrData = await runCaliberOcr(c.local_path);
 
-          const apiBase = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.100.10:8080';
-          const ocrUrl = apiBase.replace(':8080', ':8082') + '/ocr/caliber';
-
-          const res = await fetch(ocrUrl, { method: 'POST', body: form });
-          if (!res.ok) throw new Error('Error en OCR');
-
-          const ocrData = await res.json();
           const parsedCaliber = ocrData.caliber ?? '';
           const parsedWeight = ocrData.weight ?? '';
 
@@ -43,8 +36,11 @@ export default function ValidateCaliberScreen() {
 
           await db.updateBatchCaliber(b.id, parsedCaliber, parsedWeight);
         } catch (err: any) {
-          console.error("Error al ejecutar OCR Calibre:", err);
-          Alert.alert('Error de Conexión', `No se pudo contactar al motor OCR.\nDetalle: ${err.message}`);
+          console.error('Error al ejecutar OCR Calibre:', err);
+          Alert.alert(
+            'Error al leer el calibre',
+            err.message ?? 'No se pudo contactar al motor OCR.',
+          );
         }
       } else if (b) {
         setCaliber(b.caliber ?? '');
@@ -60,11 +56,46 @@ export default function ValidateCaliberScreen() {
       return;
     }
     
-    // Encolar sincronización
-    await db.enqueue(id, 'ADD_CALIBER', { caliber, weight });
-    
-    // Finalizar flujo y volver a inicio
-    router.replace('/(tabs)');
+    if (!batch || !captura || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      // 1. Guardar los datos del OCR en SQLite (pero no finalizar aún)
+      await db.updateBatchCaliber(batch.id, caliber, weight);
+
+      // 2. Recuperar todas las capturas del lote
+      const remitoCap = await db.getCapturaByType(batch.id, 'remito');
+      const ovenCap = await db.getCapturaByType(batch.id, 'oven');
+      
+      if (!remitoCap || !ovenCap) {
+        throw new Error("Faltan imágenes de remito u horno para este lote.");
+      }
+
+      // 3. Llamar al backend para completar el lote
+      const result = await createCompleteBatch({
+        remitoImageUri: remitoCap.local_path,
+        ovenImageUri: ovenCap.local_path,
+        caliberImageUri: captura.local_path,
+        farmName: batch.farm_name || '',
+        harvestType: batch.harvest_type || '',
+        remitoDate: batch.remito_date || '',
+        ovenId: batch.oven_id || '',
+        humidity: batch.humidity || '',
+        caliber,
+        weight,
+      });
+
+      // 4. Actualizar lote local con trace_number definitivo, hash y estado
+      await db.enqueue(batch.id, 'BATCH_COMPLETED', { result }); // optional sync track
+      
+      // Navigate to results
+      router.replace({ pathname: '/batch/results', params: { trace_number: result.trace_number } });
+    } catch (err: any) {
+      console.error('Error al completar lote:', err);
+      Alert.alert('Error al guardar', err.message ?? 'No se pudo sincronizar el lote con el servidor.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (loading) {
@@ -104,11 +135,18 @@ export default function ValidateCaliberScreen() {
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.btnSecondary} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.btnSecondary} onPress={() => router.back()} disabled={isSaving}>
           <Text style={styles.btnSecondaryText}>Retomar foto</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.btnPrimary} onPress={handleConfirm}>
-          <Text style={styles.btnPrimaryText}>Finalizar Lote</Text>
+        <TouchableOpacity 
+          style={[styles.btnPrimary, isSaving && { opacity: 0.6 }]} 
+          onPress={handleConfirm}
+          disabled={isSaving}
+        >
+          {isSaving 
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Text style={styles.btnPrimaryText}>Finalizar Lote</Text>
+          }
         </TouchableOpacity>
       </View>
     </ScrollView>

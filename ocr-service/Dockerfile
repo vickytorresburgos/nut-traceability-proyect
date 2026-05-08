@@ -14,6 +14,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-descarga los modelos de EasyOCR durante el build para que no haya
+# delay en la primera request de producción. Los modelos se cachean en ~/.EasyOCR/
+RUN python3 -c "import easyocr; easyocr.Reader(['es', 'en'], gpu=False, verbose=False)" \
+    || echo "Advertencia: descarga de modelos EasyOCR falló, se intentará en runtime."
+
+
 COPY . .
 
 EXPOSE 8081

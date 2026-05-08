@@ -33,9 +33,7 @@
         { "cameraPermission": "La app usa la cámara para escanear remitos y hornos." }
       ]
     ],
-    "scheme": "nut-traceability",
-    "extra": {
-      "eas": { "projectId": "your-eas-project-id" }
-    }
+    "scheme": "nut-traceability"
   }
 }
+

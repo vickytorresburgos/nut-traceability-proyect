@@ -9,7 +9,7 @@
 import React, { useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useGlobalSearchParams } from 'expo-router';
 import { db } from '../../src/db/database';
 import { generateLocalTraceNumber } from '../../src/services/traceGenerator';
 
@@ -18,11 +18,12 @@ export default function CameraScreen() {
   const cameraRef = useRef<CameraView>(null);
   const router = useRouter();
 
-  const params = useLocalSearchParams<{ type?: 'remito' | 'oven' | 'caliber', batchId?: string }>();
+  const params = useGlobalSearchParams<{ type?: 'remito' | 'oven' | 'caliber', batchId?: string }>();
   
   // Estados
   const [type, setType] = useState<'remito' | 'oven' | 'caliber'>('remito');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [flashOn, setFlashOn] = useState(false);
   const activeBatchId = useRef<string | null>(null);
 
   // Sincronizar params con el estado
@@ -61,11 +62,11 @@ export default function CameraScreen() {
       let batchId: string;
 
       if (type === 'remito') {
-        // Se usa un ID temporal para evitar colisiones. El ID definitivo se genera en Validate
-        const trace = `TMP-${Date.now()}`;
+        // trace_number se asigna en Validate una vez que el OCR confirma la finca.
+        // Se deja NULL para evitar colisiones UNIQUE antes de conocer los datos reales.
         const batch = await db.createBatch({
-          trace_number: trace,
-          farm_name: '', // A completar en Validate
+          trace_number: null,
+          farm_name: '',
           harvest_type: 'mecanica',
           remito_date: new Date().toISOString().slice(0, 10),
         });
@@ -112,13 +113,28 @@ export default function CameraScreen() {
           style={[styles.typeBtn, type === 'oven' && styles.typeBtnActive]}
           onPress={() => setType('oven')}
         >
-          <Text style={[styles.typeText, type === 'oven' && styles.typeTextActive]}>Horno</Text>
+          <Text style={[styles.typeText, type === 'oven' && styles.typeTextActive]}>Humedad</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.typeBtn, type === 'caliber' && styles.typeBtnActive]}
+          onPress={() => setType('caliber')}
+        >
+          <Text style={[styles.typeText, type === 'caliber' && styles.typeTextActive]}>Calibre</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Botón de Flash */}
+      <TouchableOpacity 
+        style={styles.flashBtn} 
+        onPress={() => setFlashOn(!flashOn)}
+      >
+        <Text style={styles.flashText}>FLASH {flashOn ? 'ON' : 'OFF'}</Text>
+      </TouchableOpacity>
 
       <CameraView 
         style={styles.camera} 
         facing="back"
+        enableTorch={flashOn}
         // @ts-ignore - expo-camera CameraView missing ref in its types
         ref={cameraRef}
       />
@@ -128,7 +144,7 @@ export default function CameraScreen() {
         {/* Rectángulo guía para OCR */}
         <View style={styles.guideFrame} />
         <Text style={styles.guideText}>
-          Alineá el {type === 'remito' ? 'remito' : 'display'} dentro del marco
+          Alineá el {type === 'remito' ? 'remito' : type === 'oven' ? 'display del horno' : 'papel del calibre'} dentro del marco
         </Text>
 
         {/* Botón de captura */}
@@ -164,4 +180,6 @@ const styles = StyleSheet.create({
   typeTextActive: { color: '#34d399' },
   btnPrimary: { backgroundColor: '#059669', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
   btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  flashBtn: { position: 'absolute', top: 50, right: 20, zIndex: 10, backgroundColor: 'rgba(15, 23, 42, 0.8)', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: '#334155' },
+  flashText: { color: '#f8fafc', fontSize: 14, fontWeight: '600' },
 });

@@ -33,13 +33,25 @@ export function getFarmInitials(farmName: string): string {
  */
 export async function generateLocalTraceNumber(farmName: string): Promise<string> {
   const initials = getFarmInitials(farmName);
-  const today = new Date().toISOString().slice(0, 10);
 
-  // Contar lotes de esta finca creados hoy para el secuencial
-  const lotesHoy = await db.getBatchesForToday();
-  const count = lotesHoy.filter((l) => l.farm_name === farmName).length + 1;
+  // Buscar todos los trace_numbers que ya existen con el prefijo de esta finca.
+  // Incrementamos el contador hasta encontrar uno libre (a prueba de colisiones).
+  const allBatches = await db.getAllBatches();
+  const usedNumbers = new Set(
+    allBatches
+      .map((b) => b.trace_number)
+      .filter((t): t is string => t !== null && t.startsWith(`${initials}-`))
+      .map((t) => {
+        const num = parseInt(t.split('-')[1], 10);
+        return isNaN(num) ? 0 : num;
+      })
+  );
 
-  // El usuario solicitó el formato exacto: LF-04
+  let count = 1;
+  while (usedNumbers.has(count)) {
+    count++;
+  }
+
   return `${initials}-${String(count).padStart(2, '0')}`;
 }
 

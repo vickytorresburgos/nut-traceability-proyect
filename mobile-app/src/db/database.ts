@@ -151,6 +151,15 @@ class Database {
       CREATE INDEX IF NOT EXISTS idx_capturas_lote ON capturas(lote_id, type);
       CREATE INDEX IF NOT EXISTS idx_queue_status ON sync_queue(status, attempt_count);
     `);
+
+    // Limpieza de datos sucios de versiones anteriores:
+    // trace_number = '' o 'TMP-*' se revierten a NULL para evitar colisiones UNIQUE.
+    // SQLite permite múltiples NULL en columnas UNIQUE.
+    await this.conn.runAsync(
+      `UPDATE nut_batches
+       SET trace_number = NULL
+       WHERE trace_number = '' OR trace_number LIKE 'TMP-%'`
+    );
   }
 
   // ── nut_batches ─────────────────────────────────────────────────────────
@@ -189,6 +198,13 @@ class Database {
     );
   }
 
+  /** Todos los lotes (para verificar unicidad de trace_number) */
+  async getAllBatches(): Promise<NutBatch[]> {
+    return this.conn.getAllAsync<NutBatch>(
+      'SELECT * FROM nut_batches ORDER BY created_at DESC'
+    );
+  }
+
   /** Lotes creados hoy, orden descendente */
   async getBatchesForToday(): Promise<NutBatch[]> {
     const today = new Date().toISOString().slice(0, 10);
@@ -213,7 +229,23 @@ class Database {
     );
   }
 
-  async updateBatchDetails(id: string, farm_name: string, harvest_type: string, remito_date: string, trace_number: string): Promise<void> {
+  /**
+   * Actualiza solo los datos OCR del remito (farm_name, harvest_type, remito_date).
+   * NO toca trace_number para evitar colisiones UNIQUE durante el procesamiento OCR.
+   * Llamar inmediatamente después de recibir el resultado OCR (antes de confirmar).
+   */
+  async updateBatchOcrData(id: string, farm_name: string, harvest_type: string, remito_date: string): Promise<void> {
+    await this.conn.runAsync(
+      'UPDATE nut_batches SET farm_name = ?, harvest_type = ?, remito_date = ? WHERE id = ?',
+      [farm_name, harvest_type, remito_date, id]
+    );
+  }
+
+  /**
+   * Actualiza todos los datos del remito incluyendo el trace_number definitivo.
+   * Llamar solo en el momento en que el operario confirma los datos (save()).
+   */
+  async updateBatchDetails(id: string, farm_name: string, harvest_type: string, remito_date: string, trace_number: string | null): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET farm_name = ?, harvest_type = ?, remito_date = ?, trace_number = ? WHERE id = ?',
       [farm_name, harvest_type, remito_date, trace_number, id]
@@ -227,10 +259,10 @@ class Database {
     );
   }
 
-  async updateBatchCaliber(id: string, caliber: string, weight: string, sha256_hash: string): Promise<void> {
+  async updateBatchCaliber(id: string, caliber: string, weight: string, sha256_hash?: string): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET caliber = ?, weight = ?, sha256_hash = ? WHERE id = ?',
-      [caliber, weight, sha256_hash, id]
+      [caliber, weight, sha256_hash ?? null, id]
     );
   }
 

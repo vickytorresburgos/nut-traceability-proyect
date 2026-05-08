@@ -1,6 +1,7 @@
 import os
 import tempfile
 import logging
+import threading
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
@@ -10,6 +11,7 @@ from engine.pipeline import (
     process_oven_image,
     process_caliber_image,
 )
+from engine.extraction import warmup_easyocr
 from core.constants import CONFIDENCE_REJECT_THRESHOLD
 
 app = FastAPI(title="Nut Traceability — OCR Service", version="2.0.0")
@@ -17,6 +19,15 @@ app = FastAPI(title="Nut Traceability — OCR Service", version="2.0.0")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocr-service")
 
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Al arrancar el servidor, pre-carga los modelos de EasyOCR en un thread
+    separado para no bloquear el loop de asyncio. Las requests pueden llegar
+    mientras carga; si EasyOCR todavía no está listo, Tesseract responde solo.
+    """
+    threading.Thread(target=warmup_easyocr, daemon=True, name="easyocr-warmup").start()
 
 class RemitoResponse(BaseModel):
     raw_text: str
