@@ -3,7 +3,7 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { runCaliberOcr } from '../../src/services/ocrApi';
-import { createCompleteBatch } from '../../src/services/batchApi';
+import { addCaliberToBatch, completeBatch } from '../../src/services/batchApi';
 
 export default function ValidateCaliberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -60,39 +60,29 @@ export default function ValidateCaliberScreen() {
 
     setIsSaving(true);
     try {
-      // 1. Guardar los datos del OCR en SQLite (pero no finalizar aún)
+      // ACTUALIZACIÓN OFFLINE-FIRST:
+      // Encolamos la operación ADD_CALIBER y COMPLETE_BATCH. 
+      
       await db.updateBatchCaliber(batch.id, caliber, weight);
 
-      // 2. Recuperar todas las capturas del lote
-      const remitoCap = await db.getCapturaByType(batch.id, 'remito');
-      const ovenCap = await db.getCapturaByType(batch.id, 'oven');
-      
-      if (!remitoCap || !ovenCap) {
-        throw new Error("Faltan imágenes de remito u horno para este lote.");
-      }
-
-      // 3. Llamar al backend para completar el lote
-      const result = await createCompleteBatch({
-        remitoImageUri: remitoCap.local_path,
-        ovenImageUri: ovenCap.local_path,
-        caliberImageUri: captura.local_path,
-        farmName: batch.farm_name || '',
-        harvestType: batch.harvest_type || '',
-        remitoDate: batch.remito_date || '',
-        ovenId: batch.oven_id || '',
-        humidity: batch.humidity || '',
-        caliber,
-        weight,
+      await db.enqueue(batch.id, 'ADD_CALIBER', {
+        caliber: caliber,
+        weight: weight
       });
 
-      // 4. Actualizar lote local con trace_number definitivo, hash y estado
-      await db.enqueue(batch.id, 'BATCH_COMPLETED', { result }); // optional sync track
-      
-      // Navigate to results
-      router.replace({ pathname: '/batch/results', params: { trace_number: result.trace_number } });
+      await db.enqueue(batch.id, 'COMPLETE_BATCH', {});
+
+      // Navegar a resultados. El ResultsScreen ya maneja el fetch del server 
+      // si el lote aún no tiene trace_number localmente.
+      router.replace({ 
+        pathname: '/batch/results', 
+        params: { 
+          trace_number: batch.trace_number ?? 'Sincronizando...' 
+        } 
+      });
     } catch (err: any) {
-      console.error('Error al completar lote:', err);
-      Alert.alert('Error al guardar', err.message ?? 'No se pudo sincronizar el lote con el servidor.');
+      console.error('Error al encolar calibre:', err);
+      Alert.alert('Error al guardar', 'No se pudo guardar la información del calibre localmente.');
     } finally {
       setIsSaving(false);
     }

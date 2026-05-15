@@ -11,7 +11,6 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } fr
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter, useGlobalSearchParams } from 'expo-router';
 import { db } from '../../src/db/database';
-import { generateLocalTraceNumber } from '../../src/services/traceGenerator';
 
 export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -50,24 +49,28 @@ export default function CameraScreen() {
     
     setIsProcessing(true);
     try {
+      // 1. Capturar la foto con EXIF (necesario para corregir orientación en móvil)
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 1, // Calidad máxima para el OCR
-        base64: false, // Guardamos la URI y lo pasamos al file system
+        quality: 1.0, 
+        base64: false,
+        exif: true,
       });
 
       if (!photo) throw new Error('No se pudo capturar la foto');
 
-      // 1. Crear el lote si es un remito (inicio de trazabilidad)
-      // O pedir ID de lote activo si es horno/calibre (simplificado: asumimos lote nuevo para el remito)
+      // 1.1 Pre-procesamiento de flujo (HU-04.01 Fix)
+      // En lugar de rotar automáticamente, delegamos en el Editor Manual para que el 
+      // operario asegure la orientación horizontal y el encuadre correcto.
+      console.log(`[Camera] Foto capturada: ${photo.width}x${photo.height}. Redirigiendo a editor...`);
+
+      // 2. Crear el lote si es un remito (inicio de trazabilidad)
       let batchId: string;
 
       if (type === 'remito') {
-        // trace_number se asigna en Validate una vez que el OCR confirma la finca.
-        // Se deja NULL para evitar colisiones UNIQUE antes de conocer los datos reales.
         const batch = await db.createBatch({
           trace_number: null,
           farm_name: '',
-          harvest_type: 'mecanica',
+          harvest_type: '',
           remito_date: new Date().toISOString().slice(0, 10),
         });
         batchId = batch.id;
@@ -80,17 +83,15 @@ export default function CameraScreen() {
         batchId = activeBatchId.current;
       }
 
-      // 2. Guardar captura (calcula SHA-256 internamente)
-      await db.saveCaptura(batchId, type, photo.uri);
-
-      // 3. Ir a la validación correspondiente
-      if (type === 'remito') {
-        router.push({ pathname: '/batch/validate', params: { id: batchId } });
-      } else if (type === 'oven') {
-        router.push({ pathname: '/batch/validateOven', params: { id: batchId } });
-      } else if (type === 'caliber') {
-        router.push({ pathname: '/batch/validateCaliber', params: { id: batchId } });
-      }
+      // 3. Ir al editor manual en lugar de la validación directa
+      router.push({
+        pathname: '/batch/editor',
+        params: { 
+          uri: photo.uri, 
+          batchId: batchId,
+          type: type 
+        }
+      });
 
     } catch (err: any) {
       Alert.alert('Error al capturar', err.message);
@@ -180,6 +181,6 @@ const styles = StyleSheet.create({
   typeTextActive: { color: '#34d399' },
   btnPrimary: { backgroundColor: '#059669', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
   btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  flashBtn: { position: 'absolute', top: 50, right: 20, zIndex: 10, backgroundColor: 'rgba(15, 23, 42, 0.8)', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: '#334155' },
+  flashBtn: { position: 'absolute', top: 110, right: 20, zIndex: 10, backgroundColor: 'rgba(15, 23, 42, 0.8)', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: '#334155' },
   flashText: { color: '#f8fafc', fontSize: 14, fontWeight: '600' },
 });

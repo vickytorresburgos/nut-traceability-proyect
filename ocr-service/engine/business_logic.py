@@ -120,7 +120,7 @@ def extract_date(raw_text: str) -> str | None:
         day, month, year = m.group(1), m.group(2), m.group(3)
         if len(year) == 2:
             year = f"20{year}"
-        return f"{day.zfill(2)}/{month.zfill(2)}/{year}"
+        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
 
     m = re.search(
         r'(\d{1,2})\s+(?:de\s+)?(' + '|'.join(MESES_ES.keys()) + r')\s+(?:de\s+)?(\d{2,4})',
@@ -132,7 +132,7 @@ def extract_date(raw_text: str) -> str | None:
         year = m.group(3)
         if len(year) == 2:
             year = f"20{year}"
-        return f"{day}/{month}/{year}"
+        return f"{year}-{month}-{day}"
 
     return None
 

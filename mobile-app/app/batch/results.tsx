@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
 import { db, NutBatch } from '../../src/db/database';
 import { Platform } from 'react-native';
-
-const BASE_URL = Platform.OS === 'android' ? 'http://192.168.100.10:8080' : 'http://localhost:8080';
+import { API_URL, DASHBOARD_URL } from '../../src/services/config';
 
 export default function ResultsScreen() {
   const { trace_number } = useLocalSearchParams<{ trace_number: string }>();
@@ -26,7 +25,7 @@ export default function ResultsScreen() {
       const b = batches.find(b => b.trace_number === trace_number);
       // Hack for now, wait a bit or use another method. Actually we need to fetch from server to get the hash!
       try {
-        const response = await fetch(`${BASE_URL}/api/v1/batches/by-trace/${trace_number}`);
+        const response = await fetch(`${API_URL}/api/v1/batches/by-trace/${trace_number}`);
         if (response.ok) {
           const data = await response.json();
           setBatch(data);
@@ -47,7 +46,7 @@ export default function ResultsScreen() {
     );
   }
 
-  const qrUrl = `${BASE_URL}/dashboard?trace_id=${trace_number}`;
+  const qrUrl = `${DASHBOARD_URL}/?trace_id=${trace_number}`;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -82,18 +81,18 @@ export default function ResultsScreen() {
         </>
       )}
 
-      <View style={styles.qrContainer}>
+      <TouchableOpacity style={styles.qrContainer} onPress={() => Linking.openURL(qrUrl)}>
         <QRCode
           value={qrUrl}
           size={200}
           backgroundColor="#ffffff"
           color="#0f172a"
         />
-        <Text style={styles.qrHelp}>Escaneá para ver en Dashboard</Text>
-      </View>
+        <Text style={styles.qrHelp}>Escaneá o tocá para ver Dashboard</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity style={styles.btnPrimary} onPress={() => router.replace('/(tabs)')}>
-        <Text style={styles.btnPrimaryText}>Nuevo Lote</Text>
+        <Text style={styles.btnPrimaryText}>Volver</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -110,8 +109,8 @@ const styles = StyleSheet.create({
   value: { color: '#f8fafc', fontSize: 16, fontWeight: '500' },
   valueLarge: { color: '#f8fafc', fontSize: 32, fontWeight: '700', letterSpacing: 2 },
   hashText: { color: '#94a3b8', fontSize: 12, fontFamily: 'monospace' },
-  qrContainer: { backgroundColor: '#fff', padding: 24, borderRadius: 24, alignItems: 'center', marginBottom: 32, width: '100%' },
-  qrHelp: { color: '#64748b', marginTop: 16, fontSize: 14, fontWeight: '500' },
+  qrContainer: { backgroundColor: '#fff', padding: 24, borderRadius: 24, alignItems: 'center', marginBottom: 32, width: '100%', elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10 },
+  qrHelp: { color: '#059669', marginTop: 16, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
   btnPrimary: { width: '100%', padding: 18, borderRadius: 16, backgroundColor: '#059669', alignItems: 'center' },
   btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 });

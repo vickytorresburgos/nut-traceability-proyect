@@ -16,8 +16,8 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { SyncStatusBadge } from '../../src/components/SyncStatusBadge';
-import { generateLocalTraceNumber } from '../../src/services/traceGenerator';
 import { runRemitoOcr } from '../../src/services/ocrApi';
+import { createBatchFromRemito } from '../../src/services/batchApi';
 
 const KNOWN_FARMS = [
   'LOS TILOS', 'LAS FLORES', 'LOS ANDES', 'LOS CAPOS',
@@ -40,14 +40,20 @@ export default function ValidateScreen() {
 
   useEffect(() => {
     (async () => {
+      console.log(`[Validate] Cargando datos para lote ID: ${id}`);
       const b = await db.getBatchById(id);
       const c = b ? await db.getCapturaByType(b.id, 'remito') : null;
+      
+      console.log(`[Validate] Batch encontrado: ${!!b}, Captura encontrada: ${!!c}, Finca actual: "${b?.farm_name}"`);
       setBatch(b);
       setCaptura(c);
       
-      if (b && c && b.farm_name === '') {
+      // Corregido: disparar OCR si farm_name es null o vacío
+      if (b && c && (!b.farm_name || b.farm_name === '')) {
         try {
+          console.log(`[Validate] Disparando OCR para remito: ${c.local_path}`);
           const ocrData = await runRemitoOcr(c.local_path);
+          console.log(`[Validate] OCR completado con éxito: ${ocrData.farm_name}`);
 
           const fName = ocrData.farm_name ?? '';
           const hType = (ocrData.harvest_type as 'manual' | 'mecanica') ?? 'mecanica';
@@ -105,23 +111,28 @@ export default function ValidateScreen() {
   };
 
   const save = async () => {
-    if (!batch || isSaving) return;
+    if (!batch || !captura || isSaving) return;
     setIsSaving(true);
     try {
-      // Generar el trace number local definitivo basado en la finca seleccionada
-      const finalTraceNumber = await generateLocalTraceNumber(farmName.toUpperCase());
+      // ACTUALIZACIÓN OFFLINE-FIRST:
+      // En lugar de llamar a la API directamente, encolamos la operación.
+      // El SyncManager se encargará de subir la imagen y los datos cuando haya red.
+      
+      // 1. Guardar los detalles validados por el operario en SQLite local
+      await db.updateBatchDetails(batch.id, farmName.toUpperCase(), harvestType, date, null);
 
-      // Actualizar en SQLite local (ahora sí con el trace_number definitivo)
-      await db.updateBatchDetails(batch.id, farmName.toUpperCase(), harvestType, date, finalTraceNumber);
+      // 2. Encolar la creación del lote en el servidor
+      await db.enqueue(batch.id, 'CREATE_BATCH', {
+        farm_name: farmName.toUpperCase(),
+        harvest_type: harvestType,
+        remito_date: date,
+      });
 
-      // NOTA: NO encolamos CREATE_BATCH aquí porque el lote completo
-      // se sincroniza de una sola vez en validateCaliber.tsx via createCompleteBatch.
-
-      // Avanzar a la captura del horno pasando el ID del lote
+      // 3. Continuar al siguiente paso sin esperar al servidor
       router.navigate(`/camera?type=oven&batchId=${batch.id}`);
     } catch (err: any) {
-      console.error('Error al guardar:', err);
-      Alert.alert('Error', err.message ?? 'No se pudo guardar el lote.');
+      console.error('Error al encolar lote:', err);
+      Alert.alert('Error', 'No se pudo guardar el lote localmente.');
     } finally {
       setIsSaving(false);
     }

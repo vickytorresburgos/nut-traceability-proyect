@@ -14,7 +14,8 @@ import * as Crypto from 'expo-crypto';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import { db, SyncQueueItem, Captura } from '../db/database';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.100.10:8080';
+import { API_URL as API_BASE } from './config';
+import { optimizeImage } from './imageService';
 const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 2_000; // 2s * 2^attempt
 
@@ -22,7 +23,7 @@ const BASE_BACKOFF_MS = 2_000; // 2s * 2^attempt
 // Tipos
 // ---------------------------------------------------------------------------
 
-type Operation = 'CREATE_BATCH' | 'ADD_OVEN' | 'ADD_CALIBER';
+type Operation = 'CREATE_BATCH' | 'ADD_OVEN' | 'ADD_CALIBER' | 'COMPLETE_BATCH';
 
 // ---------------------------------------------------------------------------
 // SyncManager — Singleton
@@ -60,10 +61,15 @@ class SyncManager {
     if (this.isSyncing) return;
 
     const netState = await NetInfo.fetch();
-    if (!netState.isConnected || !netState.isInternetReachable) return;
+    // En desarrollo/USB, isInternetReachable puede ser false. 
+    // Solo validamos que esté "conectado" físicamente (vía Wi-Fi o Túnel).
+    if (!netState.isConnected) {
+      console.log('[SyncManager] Sin conexión física detectada.');
+      return;
+    }
 
     this.isSyncing = true;
-    console.log('[SyncManager] Iniciando sincronización...');
+    console.log(`[SyncManager] Iniciando sync con base: ${API_BASE}`);
 
     try {
       const pending = await db.getPendingItems();
@@ -100,15 +106,20 @@ class SyncManager {
     await db.setSyncItemStatus(item.id, 'IN_PROGRESS');
 
     try {
+      const payload = JSON.parse(item.payload);
+      
       switch (item.operation as Operation) {
         case 'CREATE_BATCH':
-          await this.createBatch(item);
+          await this.createBatch(item, payload);
           break;
         case 'ADD_OVEN':
-          await this.addOven(item);
+          await this.addOven(item, payload);
           break;
         case 'ADD_CALIBER':
-          await this.addCaliber(item);
+          await this.addCaliber(item, payload);
+          break;
+        case 'COMPLETE_BATCH':
+          await this.completeBatch(item);
           break;
       }
       await db.setSyncItemStatus(item.id, 'DONE');
@@ -152,18 +163,23 @@ class SyncManager {
   // Operaciones de API
   // -------------------------------------------------------------------------
 
-  private async createBatch(item: SyncQueueItem): Promise<void> {
+  private async createBatch(item: SyncQueueItem, payload: any): Promise<void> {
     const captura = await db.getCapturaByType(item.lote_id, 'remito');
     if (!captura) throw new Error('Captura de remito no encontrada');
 
     await this.verifyImageIntegrity(captura);
+    const optimizedUri = await optimizeImage(captura.local_path);
 
     const form = new FormData();
     form.append('remito_image', {
-      uri: captura.local_path,
+      uri: optimizedUri,
       name: 'remito.jpg',
       type: 'image/jpeg',
     } as any);
+    
+    if (payload.farm_name) form.append('farm_name', payload.farm_name);
+    if (payload.harvest_type) form.append('harvest_type', payload.harvest_type);
+    if (payload.remito_date) form.append('remito_date', payload.remito_date);
 
     const res = await fetch(`${API_BASE}/api/v1/batches`, {
       method: 'POST',
@@ -172,10 +188,10 @@ class SyncManager {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
 
     const { batch_id, trace_number } = await res.json();
-    await db.updateBatchAfterSync(item.lote_id, batch_id, trace_number);
+    await db.updateBatchAfterSync(item.lote_id, batch_id, trace_number ?? null);
   }
 
-  private async addOven(item: SyncQueueItem): Promise<void> {
+  private async addOven(item: SyncQueueItem, payload: any): Promise<void> {
     const lote = await db.getBatchById(item.lote_id);
     if (!lote?.server_id) throw new Error('server_id aún no disponible, esperar CREATE_BATCH');
 
@@ -183,13 +199,17 @@ class SyncManager {
     if (!captura) throw new Error('Captura de horno no encontrada');
 
     await this.verifyImageIntegrity(captura);
+    const optimizedUri = await optimizeImage(captura.local_path);
 
     const form = new FormData();
     form.append('oven_image', {
-      uri: captura.local_path,
+      uri: optimizedUri,
       name: 'oven.jpg',
       type: 'image/jpeg',
     } as any);
+    
+    if (payload.oven_id) form.append('oven_id', payload.oven_id);
+    if (payload.humidity) form.append('humidity', payload.humidity);
 
     const res = await fetch(`${API_BASE}/api/v1/batches/${lote.server_id}/oven`, {
       method: 'POST',
@@ -198,7 +218,7 @@ class SyncManager {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
   }
 
-  private async addCaliber(item: SyncQueueItem): Promise<void> {
+  private async addCaliber(item: SyncQueueItem, payload: any): Promise<void> {
     const lote = await db.getBatchById(item.lote_id);
     if (!lote?.server_id) throw new Error('server_id aún no disponible');
 
@@ -206,19 +226,37 @@ class SyncManager {
     if (!captura) throw new Error('Captura de calibre no encontrada');
 
     await this.verifyImageIntegrity(captura);
+    const optimizedUri = await optimizeImage(captura.local_path);
 
     const form = new FormData();
     form.append('caliber_image', {
-      uri: captura.local_path,
+      uri: optimizedUri,
       name: 'caliber.jpg',
       type: 'image/jpeg',
     } as any);
+    
+    if (payload.caliber) form.append('caliber', payload.caliber);
+    if (payload.weight) form.append('weight', payload.weight);
 
     const res = await fetch(`${API_BASE}/api/v1/batches/${lote.server_id}/caliber`, {
       method: 'POST',
       body: form,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  }
+
+  private async completeBatch(item: SyncQueueItem): Promise<void> {
+    const lote = await db.getBatchById(item.lote_id);
+    if (!lote?.server_id) throw new Error('server_id aún no disponible');
+
+    const res = await fetch(`${API_BASE}/api/v1/batches/${lote.server_id}/complete`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    
+    const result = await res.json();
+    // Actualizar el lote local con el trace_number definitivo del servidor
+    await db.updateBatchAfterSync(item.lote_id, lote.server_id, result.trace_number);
   }
 }
 

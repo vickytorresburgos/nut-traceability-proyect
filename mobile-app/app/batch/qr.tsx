@@ -8,13 +8,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Share, ActivityIndicator,
+  StyleSheet, Share, ActivityIndicator, Linking,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch } from '../../src/db/database';
-
-const BASE_URL = 'https://nut-traceability-um.com/batch';
+import { DASHBOARD_URL } from '../../src/services/config';
 
 export default function QRScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,7 +33,7 @@ export default function QRScreen() {
   }
 
   const traceId = batch.trace_number ?? batch.id.slice(0, 8).toUpperCase();
-  const qrUrl = `${BASE_URL}/${traceId}`;
+  const qrUrl = `${DASHBOARD_URL}/?trace_id=${traceId}`;
   const isProvisional = batch.server_id == null;
 
   const handleShare = async () => {
@@ -73,7 +72,9 @@ export default function QRScreen() {
           ecl="H"
         />
       </View>
-      <Text style={styles.qrUrl}>{qrUrl}</Text>
+      <TouchableOpacity onPress={() => Linking.openURL(qrUrl)}>
+        <Text style={styles.qrUrl}>{qrUrl}</Text>
+      </TouchableOpacity>
 
       {/* Resumen del lote */}
       <View style={styles.summary}>
@@ -130,7 +131,7 @@ const styles = StyleSheet.create({
   provisionalBadge: { backgroundColor: '#422006', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, marginTop: 8 },
   provisionalText: { color: '#fbbf24', fontSize: 12 },
   qrContainer: { alignItems: 'center', backgroundColor: '#fff', padding: 20, borderRadius: 24, marginBottom: 12, shadowColor: '#34d399', shadowOpacity: 0.3, shadowRadius: 20, elevation: 8 },
-  qrUrl: { textAlign: 'center', color: '#475569', fontSize: 11, marginBottom: 24 },
+  qrUrl: { textAlign: 'center', color: '#34d399', fontSize: 11, marginBottom: 24, textDecorationLine: 'underline' },
   summary: { backgroundColor: '#1e293b', borderRadius: 16, padding: 16, marginBottom: 16 },
   hashBox: { backgroundColor: '#0a0a1a', borderWidth: 1, borderColor: '#1e293b', borderRadius: 12, padding: 14, marginBottom: 24 },
   hashLabel: { color: '#475569', fontSize: 11, marginBottom: 6, letterSpacing: 0.5 },

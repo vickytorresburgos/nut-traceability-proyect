@@ -11,6 +11,15 @@ logger = logging.getLogger("ocr-engine.vision")
 # ---------------------------------------------------------------------------
 
 def _load_image_exif_safe(image_path: str) -> np.ndarray:
+    """
+    Carga una imagen y asegura su orientación horizontal.
+    
+    NOTA: El sistema ahora define el estándar HORIZONTAL para todas las capturas,
+    coincidiendo con las imágenes de prueba (test-img/). Los clientes móviles 
+    normalizan la imagen antes del upload (quemando la orientación en los píxeles). 
+    Esta función se mantiene para corregir orientaciones vía EXIF en caso de que 
+    lleguen imágenes crudas sin normalizar.
+    """
     try:
         pil_img = Image.open(image_path)
         exif = pil_img._getexif()
@@ -98,8 +107,8 @@ def _correct_perspective(image: np.ndarray) -> np.ndarray:
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
         if len(approx) == 4:
             area = cv2.contourArea(approx)
-            if area < (h * w * 0.60):
-                # El contorno cubre menos del 60% de la imagen.
+            if area < (h * w * 0.40):
+                # El contorno cubre menos del 40% de la imagen.
                 # Probablemente es un bloque de texto, no el borde del papel.
                 continue
 
@@ -167,10 +176,22 @@ def preprocess_document(image_path: str) -> np.ndarray:
     """
     Pipeline optimizado para documentos IMPRESOS en papel.
     Aplica bilateral filter y adaptive threshold con bloque grande.
+
+    Usa _load_image_exif_safe para corregir orientación según metadatos EXIF.
+    Cap de 2000px de ancho para evitar saturar la CPU con fotos 4K.
     """
+    MAX_WIDTH = 2000
+
     img = _load_image_exif_safe(image_path)
+    if img is None:
+        raise ValueError(f"No se pudo cargar la imagen: {image_path}")
+
     h, w = img.shape[:2]
-    if w < 1500:
+    if w > MAX_WIDTH:
+        scale = MAX_WIDTH / w
+        img = cv2.resize(img, (MAX_WIDTH, int(h * scale)), interpolation=cv2.INTER_AREA)
+    elif w < 1000:
+        # Solo escalar si es muy pequeña (capturas de baja resolución)
         img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
     img = _correct_perspective(img)
@@ -201,14 +222,24 @@ def preprocess_handwritten(image_path: str) -> np.ndarray:
     - Gaussian blur suave (3x3) en lugar de bilateral para no borrar trazos.
     - blockSize=15 (vs 41) para adaptarse a la variabilidad del trazo.
     - Kernel morfológico mínimo para no fusionar letras escritas a mano.
-    """
-    img = _load_image_exif_safe(image_path)
-    h, w = img.shape[:2]
 
-    # Escalar más agresivamente para capturar detalles del trazo manuscrito
-    scale = 3 if w < 1000 else 2
-    if w < 2000:
-        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    Usa _load_image_exif_safe para corregir orientación según metadatos EXIF.
+    """
+    MAX_WIDTH = 2500
+
+    img = _load_image_exif_safe(image_path)
+    if img is None:
+        raise ValueError(f"No se pudo cargar la imagen: {image_path}")
+
+    h, w = img.shape[:2]
+    if w > MAX_WIDTH:
+        scale = MAX_WIDTH / w
+        img = cv2.resize(img, (MAX_WIDTH, int(h * scale)), interpolation=cv2.INTER_AREA)
+    elif w < 2000:
+        scale = 3 if w < 1000 else 2
+        new_w = min(w * scale, MAX_WIDTH)
+        new_h = int(h * (new_w / w))
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
 
     img = _correct_perspective(img)
 
@@ -243,11 +274,29 @@ def preprocess_handwritten(image_path: str) -> np.ndarray:
 def preprocess_display(image_path: str) -> np.ndarray:
     """
     Pipeline para imágenes de displays digitales (LCD/LED).
-    Usa Otsu threshold que es óptimo para texto blanco sobre fondo oscuro.
-    FIX: ahora usa _load_image_exif_safe para corregir orientación EXIF.
+
+    Usa _load_image_exif_safe para corregir orientación según metadatos EXIF.
+
+    El escalado se limita a MAX_WIDTH=1600px: suficiente para que Tesseract
+    lea dígitos grandes de un display, y evita que imágenes de cámara
+    moderna (4K) se dupliquen a 8000px+ saturando la CPU por 90s.
     """
-    img = _load_image_exif_safe(image_path)  # antes: cv2.imread (sin corrección EXIF)
-    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    MAX_WIDTH = 1600
+
+    img = _load_image_exif_safe(image_path)
+    if img is None:
+        raise ValueError(f"No se pudo cargar la imagen: {image_path}")
+
+    h, w = img.shape[:2]
+    if w < MAX_WIDTH:
+        # Solo escalar si la imagen es más pequeña que el máximo deseado
+        scale = MAX_WIDTH / w
+        img = cv2.resize(img, (MAX_WIDTH, int(h * scale)), interpolation=cv2.INTER_CUBIC)
+    elif w > MAX_WIDTH:
+        # Reducir si es demasiado grande (ej: 4K de cámara)
+        scale = MAX_WIDTH / w
+        img = cv2.resize(img, (MAX_WIDTH, int(h * scale)), interpolation=cv2.INTER_AREA)
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     denoised = cv2.GaussianBlur(gray, (5, 5), 0)
     _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)

@@ -64,7 +64,7 @@ export interface Captura {
 export interface SyncQueueItem {
   id: string;
   lote_id: string;
-  operation: 'CREATE_BATCH' | 'ADD_OVEN' | 'ADD_CALIBER';
+  operation: 'CREATE_BATCH' | 'ADD_OVEN' | 'ADD_CALIBER' | 'COMPLETE_BATCH';
   payload: string;                   // JSON serializado
   status: 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'FAILED';
   attempt_count: number;
@@ -183,18 +183,18 @@ class Database {
           remito_date, remito_image_url, oven_id, humidity, oven_image_url,
           caliber, weight, caliber_image_url, sha256_hash, created_at, synced_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [batch.id, batch.trace_number, batch.server_id, batch.status,
-       batch.farm_name, batch.harvest_type, batch.remito_date, batch.remito_image_url,
-       batch.oven_id, batch.humidity, batch.oven_image_url,
-       batch.caliber, batch.weight, batch.caliber_image_url,
-       batch.sha256_hash, batch.created_at, batch.synced_at]
+      [batch.id ?? null, batch.trace_number ?? null, batch.server_id ?? null, batch.status ?? null,
+       batch.farm_name ?? null, batch.harvest_type ?? null, batch.remito_date ?? null, batch.remito_image_url ?? null,
+       batch.oven_id ?? null, batch.humidity ?? null, batch.oven_image_url ?? null,
+       batch.caliber ?? null, batch.weight ?? null, batch.caliber_image_url ?? null,
+       batch.sha256_hash ?? null, batch.created_at ?? null, batch.synced_at ?? null]
     );
     return batch;
   }
 
   async getBatchById(id: string): Promise<NutBatch | null> {
     return this.conn.getFirstAsync<NutBatch>(
-      'SELECT * FROM nut_batches WHERE id = ?', [id]
+      'SELECT * FROM nut_batches WHERE id = ?', [id ?? null]
     );
   }
 
@@ -217,15 +217,15 @@ class Database {
   async updateBatchStatus(id: string, status: NutBatch['status'], synced_at?: string): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET status = ?, synced_at = ? WHERE id = ?',
-      [status, synced_at ?? null, id]
+      [status ?? null, synced_at ?? null, id ?? null]
     );
   }
 
   /** Llamado tras CREATE_BATCH exitoso: guarda el server_id y trace_number definitivo */
-  async updateBatchAfterSync(localId: string, serverId: number, traceNumber: string): Promise<void> {
+  async updateBatchAfterSync(localId: string, serverId: number | null, traceNumber: string | null): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET server_id = ?, trace_number = ?, status = ?, synced_at = ? WHERE id = ?',
-      [serverId, traceNumber, 'SYNCED', new Date().toISOString(), localId]
+      [serverId ?? null, traceNumber ?? null, 'SYNCED', new Date().toISOString(), localId ?? null]
     );
   }
 
@@ -237,7 +237,7 @@ class Database {
   async updateBatchOcrData(id: string, farm_name: string, harvest_type: string, remito_date: string): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET farm_name = ?, harvest_type = ?, remito_date = ? WHERE id = ?',
-      [farm_name, harvest_type, remito_date, id]
+      [farm_name ?? null, harvest_type ?? null, remito_date ?? null, id ?? null]
     );
   }
 
@@ -248,21 +248,21 @@ class Database {
   async updateBatchDetails(id: string, farm_name: string, harvest_type: string, remito_date: string, trace_number: string | null): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET farm_name = ?, harvest_type = ?, remito_date = ?, trace_number = ? WHERE id = ?',
-      [farm_name, harvest_type, remito_date, trace_number, id]
+      [farm_name ?? null, harvest_type ?? null, remito_date ?? null, trace_number ?? null, id ?? null]
     );
   }
 
   async updateBatchOven(id: string, oven_id: string, humidity: string): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET oven_id = ?, humidity = ? WHERE id = ?',
-      [oven_id, humidity, id]
+      [oven_id ?? null, humidity ?? null, id ?? null]
     );
   }
 
   async updateBatchCaliber(id: string, caliber: string, weight: string, sha256_hash?: string): Promise<void> {
     await this.conn.runAsync(
       'UPDATE nut_batches SET caliber = ?, weight = ?, sha256_hash = ? WHERE id = ?',
-      [caliber, weight, sha256_hash ?? null, id]
+      [caliber ?? null, weight ?? null, sha256_hash ?? null, id ?? null]
     );
   }
 
@@ -279,7 +279,28 @@ class Database {
     ocr_raw_text?: string,
     ocr_confidence?: number
   ): Promise<Captura> {
-    // 1. Copiar bytes originales al directorio persistente
+    // 1. Eliminar captura física anterior si existe (evita acumular basura al retomar foto)
+    const oldCapturas = await this.conn.getAllAsync<Captura>(
+      `SELECT local_path FROM capturas WHERE lote_id = ? AND type = ?`, [lote_id ?? null, type ?? null]
+    );
+    for (const old of oldCapturas) {
+      try {
+        await FileSystem.deleteAsync(old.local_path, { idempotent: true });
+      } catch (e) {}
+    }
+
+    // 2. Borrar de la BD y limpiar campos del lote para forzar nuevo OCR
+    await this.conn.runAsync(`DELETE FROM capturas WHERE lote_id = ? AND type = ?`, [lote_id ?? null, type ?? null]);
+    
+    if (type === 'remito') {
+      await this.conn.runAsync(`UPDATE nut_batches SET farm_name = NULL, harvest_type = NULL, remito_date = NULL WHERE id = ?`, [lote_id ?? null]);
+    } else if (type === 'oven') {
+      await this.conn.runAsync(`UPDATE nut_batches SET oven_id = NULL, humidity = NULL WHERE id = ?`, [lote_id ?? null]);
+    } else if (type === 'caliber') {
+      await this.conn.runAsync(`UPDATE nut_batches SET caliber = NULL, weight = NULL WHERE id = ?`, [lote_id ?? null]);
+    }
+
+    // 3. Copiar bytes originales al directorio persistente
     // @ts-ignore - documentDirectory missing from expo-file-system types
     const destDir = `${FileSystem.documentDirectory}capturas/${lote_id}/`;
     // @ts-ignore - 'intermediates' is valid at runtime but missing from expo-file-system's MakeDirectoryOptions
@@ -310,15 +331,15 @@ class Database {
 
     await this.conn.runAsync(
       `INSERT INTO capturas VALUES (?,?,?,?,?,?,?,?)`,
-      [captura.id, captura.lote_id, captura.type, captura.local_path,
-       captura.sha256_hash, captura.ocr_raw_text, captura.ocr_confidence, captura.captured_at]
+      [captura.id ?? null, captura.lote_id ?? null, captura.type ?? null, captura.local_path ?? null,
+       captura.sha256_hash ?? null, captura.ocr_raw_text ?? null, captura.ocr_confidence ?? null, captura.captured_at ?? null]
     );
     return captura;
   }
 
   async getCapturaByType(lote_id: string, type: string): Promise<Captura | null> {
     return this.conn.getFirstAsync<Captura>(
-      'SELECT * FROM capturas WHERE lote_id = ? AND type = ?', [lote_id, type]
+      'SELECT * FROM capturas WHERE lote_id = ? AND type = ?', [lote_id ?? null, type ?? null]
     );
   }
 
@@ -328,7 +349,7 @@ class Database {
     await this.conn.runAsync(
       `INSERT INTO sync_queue (id, lote_id, operation, payload, created_at)
        VALUES (?,?,?,?,?)`,
-      [uuidv4(), lote_id, operation, JSON.stringify(payload), new Date().toISOString()]
+      [uuidv4(), lote_id ?? null, operation ?? null, JSON.stringify(payload) ?? null, new Date().toISOString()]
     );
   }
 
@@ -343,7 +364,7 @@ class Database {
   async setSyncItemStatus(id: string, status: SyncQueueItem['status'], error?: string): Promise<void> {
     await this.conn.runAsync(
       `UPDATE sync_queue SET status=?, error_message=?, last_attempt=? WHERE id=?`,
-      [status, error ?? null, new Date().toISOString(), id]
+      [status ?? null, error ?? null, new Date().toISOString(), id ?? null]
     );
   }
 
@@ -355,7 +376,7 @@ class Database {
            error_message = ?,
            last_attempt = ?
        WHERE id = ?`,
-      [error, new Date().toISOString(), id]
+      [error ?? null, new Date().toISOString(), id ?? null]
     );
   }
 }

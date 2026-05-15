@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { runOvenOcr } from '../../src/services/ocrApi';
+import { addOvenToBatch } from '../../src/services/batchApi';
 
 export default function ValidateOvenScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -60,14 +61,25 @@ export default function ValidateOvenScreen() {
       Alert.alert('Datos incompletos', 'El OCR no detectó el horno o la humedad. Vuelva a tomar la foto.');
       return;
     }
-    
-    // Guardar datos del horno en SQLite local.
-    // NOTA: NO encolamos ADD_OVEN aqu\u00ed — el lote completo se sincroniza
-    // de una sola vez en validateCaliber.tsx via createCompleteBatch.
-    await db.updateBatchOven(id, ovenId, humidity);
-    
-    // Continuar a calibre
-    router.navigate(`/camera?type=caliber&batchId=${id}`);
+    if (!batch || !captura) return;
+
+    try {
+      // ACTUALIZACIÓN OFFLINE-FIRST:
+      // Encolamos la operación ADD_OVEN. El SyncManager esperará a que el lote 
+      // tenga server_id (tras CREATE_BATCH) para ejecutar esta petición.
+      
+      await db.updateBatchOven(id, ovenId, humidity);
+      
+      await db.enqueue(batch.id, 'ADD_OVEN', {
+        oven_id: ovenId,
+        humidity: humidity
+      });
+
+      router.navigate(`/camera?type=caliber&batchId=${id}`);
+    } catch (err: any) {
+      console.error('Error al encolar horno:', err);
+      Alert.alert('Error', 'No se pudo guardar la información del horno localmente.');
+    }
   };
 
   if (loading) {

@@ -14,40 +14,11 @@
  *   - Errores de calidad de imagen (devuelven 422 con mensaje claro)
  */
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.100.10:8080';
+import { optimizeImage } from './imageService';
+import { API_URL as API_BASE } from './config';
 
 /** Timeout en milisegundos para las llamadas OCR (el motor puede tardar con EasyOCR) */
-const OCR_TIMEOUT_MS = 90_000; // 90 segundos
-
-// ---------------------------------------------------------------------------
-// Tipos de respuesta del nut-api
-// ---------------------------------------------------------------------------
-
-export interface RemitoOcrResult {
-  farm_name: string | null;
-  harvest_type: string | null;
-  date: string | null;
-  confidence: number;
-  confidence_alert: boolean;
-  raw_text: string;
-}
-
-export interface OvenOcrResult {
-  oven_id: string | null;
-  humidity: string | null;
-  confidence: number;
-  confidence_alert: boolean;
-  raw_text: string;
-  errors: string[];
-}
-
-export interface CaliberOcrResult {
-  caliber: string | null;
-  weight: string | null;
-  confidence: number;
-  confidence_alert: boolean;
-  raw_text: string;
-}
+const OCR_TIMEOUT_MS = 150_000; // 150 segundos
 
 // ---------------------------------------------------------------------------
 // Helper interno: fetch con timeout y manejo de errores descriptivo
@@ -72,37 +43,71 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 }
 
 async function postImageToApi(endpoint: string, imageUri: string, imageName: string): Promise<any> {
+  // Optimizar imagen antes de subir
+  const optimizedUri = await optimizeImage(imageUri);
+  
   const form = new FormData();
   form.append('image', {
-    uri: imageUri,
+    uri: optimizedUri,
     name: imageName,
     type: 'image/jpeg',
   } as any);
 
   const url = `${API_BASE}${endpoint}`;
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    body: form,
-    headers: {
-      // Requerido para que localtunnel no bloquee requests que no son de un navegador
-      'bypass-tunnel-reminder': '1',
-    },
-  }, OCR_TIMEOUT_MS);
+  
+  let lastError: any;
+  const maxRetries = 2; // Total 3 intentos
 
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    body = { detail: response.statusText };
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`[ocrApi] Reintentando (${attempt}/${maxRetries}) para: ${url}`);
+        // Espera exponencial corta (500ms, 1000ms)
+        await new Promise(resolve => setTimeout(resolve, attempt * 500));
+      }
+
+      console.log(`[ocrApi] Llamando a: ${url}`);
+      const response = await fetchWithTimeout(url, {
+        method: 'POST',
+        body: form,
+        headers: {
+          // Requerido para que localtunnel no bloquee requests que no son de un navegador
+          'bypass-tunnel-reminder': '1',
+        },
+      }, OCR_TIMEOUT_MS);
+
+      let body: any;
+      try {
+        body = await response.json();
+      } catch {
+        body = { detail: response.statusText };
+      }
+
+      if (!response.ok) {
+        // El servidor devuelve { detail: "..." } en errores 4xx/5xx
+        // Estos no se reintentan porque suelen ser errores de calidad de imagen o lógica
+        const detail = body?.detail ?? `Error HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+
+      return body;
+    } catch (err: any) {
+      lastError = err;
+      // No reintentar si es un error descriptivo de la API (calidad de imagen, etc.)
+      // o si ya agotamos los intentos.
+      if (err.message && (err.message.includes('calidad insuficiente') || err.message.includes('HTTP'))) {
+        throw err;
+      }
+      
+      console.warn(`[ocrApi] Intento ${attempt} falló: ${err.message}`);
+      if (attempt === maxRetries) {
+        throw new Error(
+          `No se pudo conectar con el servidor tras ${maxRetries + 1} intentos. ` +
+          'Verificá tu conexión y que el servidor esté encendido.'
+        );
+      }
+    }
   }
-
-  if (!response.ok) {
-    // El servidor devuelve { detail: "..." } en errores 4xx/5xx
-    const detail = body?.detail ?? `Error HTTP ${response.status}`;
-    throw new Error(detail);
-  }
-
-  return body;
 }
 
 // ---------------------------------------------------------------------------

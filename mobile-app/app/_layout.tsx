@@ -9,12 +9,15 @@ export default function RootLayout() {
 
   useEffect(() => {
     async function init() {
+      console.log("[RootLayout] Iniciando aplicación...");
+      console.log("[RootLayout] API URL:", process.env.EXPO_PUBLIC_API_URL || "Usando fallback");
       try {
         await db.open();
+        console.log("[RootLayout] DB abierta correctamente");
         setIsDbReady(true);
         syncManager.start();
       } catch (e) {
-        console.error("Error initializing DB:", e);
+        console.error("[RootLayout] Error al inicializar DB:", e);
       }
     }
     init();

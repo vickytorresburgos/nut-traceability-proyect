@@ -1,6 +1,15 @@
+import os
 import logging
 import pytesseract
 import numpy as np
+
+# I1 — Apuntar a tessdata_fast para modelos ligeros (~3-5x más rápidos en CPU)
+# En el Dockerfile se instala /usr/share/tesseract-ocr/5/tessdata
+# tessdata_fast está en ese mismo directorio con los modelos .traineddata fast
+TESSDATA_FAST_PATH = os.getenv(
+    "TESSDATA_FAST_PATH",
+    "/usr/share/tesseract-ocr/5/tessdata"
+)
 
 logger = logging.getLogger("ocr-engine.extraction")
 
@@ -68,7 +77,8 @@ def _score_result(text: str, conf: float) -> float:
 # ---------------------------------------------------------------------------
 
 def _run_ocr(image: np.ndarray, psm: int) -> tuple[str, float]:
-    config = f"--oem 1 --psm {psm}"
+    # I1: --tessdata-dir apunta a tessdata_fast para inferencia más rápida en CPU
+    config = f"--oem 1 --psm {psm} --tessdata-dir {TESSDATA_FAST_PATH}"
     try:
         data = pytesseract.image_to_data(
             image, lang="spa", config=config,
@@ -181,8 +191,13 @@ def extract_text_with_fallback(
 ) -> tuple[str, float]:
     """
     Extrae texto usando Tesseract. Si la confianza queda por debajo de
-    `confidence_threshold`, activa EasyOCR como segunda opinión y devuelve
-    el resultado con mayor confianza.
+    `confidence_threshold`, activa EasyOCR como segunda opinión (solo si el
+    modelo ya está cargado en memoria) y devuelve el resultado con mayor
+    confianza.
+
+    Usa _run_easyocr_safe para no bloquear la request si EasyOCR aún no
+    terminó de cargar o está bajo alta carga — en ese caso responde con
+    el resultado de Tesseract sin esperar el timeout de 60s de EasyOCR.
 
     Args:
         image: Imagen ya preprocesada (numpy array).
@@ -199,9 +214,11 @@ def extract_text_with_fallback(
 
     logger.info(
         f"[EXTRACT] Tesseract bajo (conf={tess_conf:.1f}% < {confidence_threshold}%), "
-        "activando EasyOCR..."
+        "activando EasyOCR (safe)..."
     )
-    easy_text, easy_conf = _run_easyocr(image)
+    # _run_easyocr_safe no bloquea si el modelo aún no está listo,
+    # evitando que la request supere el timeout del proxy (OCR_TIMEOUT).
+    easy_text, easy_conf = _run_easyocr_safe(image)
 
     if easy_conf > tess_conf:
         logger.info(f"[EXTRACT] EasyOCR ganó: {easy_conf:.1f}% > Tesseract {tess_conf:.1f}%")
@@ -216,6 +233,6 @@ def extract_text_with_fallback(
 # ---------------------------------------------------------------------------
 
 def extract_text_numeric(image: np.ndarray, whitelist: str) -> str:
-    config = f"--oem 1 --psm 7 -c tessedit_char_whitelist={whitelist}"
+    config = f"--oem 1 --psm 7 --tessdata-dir {TESSDATA_FAST_PATH} -c tessedit_char_whitelist={whitelist}"
     text = pytesseract.image_to_string(image, lang="spa", config=config)
     return text.strip()

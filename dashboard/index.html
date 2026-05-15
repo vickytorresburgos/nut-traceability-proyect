@@ -107,10 +107,43 @@
     document.getElementById('hash-value').textContent  = batch.sha256_hash;
 
     // Fecha legible
-    const d = new Date(batch.remito_date + 'T12:00:00');
-    document.getElementById('batch-date').textContent = d.toLocaleDateString('es-AR', {
-      day: 'numeric', month: 'long', year: 'numeric'
-    });
+    const dateEl = document.getElementById('batch-date');
+    try {
+      if (batch.remito_date) {
+        let rawDate = String(batch.remito_date).trim();
+        let dateStr = rawDate;
+        
+        // Regex para DD/MM/YYYY o DD-MM-YYYY o DD.MM.YYYY
+        const ddmmyyyy = /^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})$/;
+        const match = dateStr.match(ddmmyyyy);
+        
+        if (match) {
+          let [_, day, month, year] = match;
+          if (year.length === 2) year = '20' + year;
+          dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        }
+        
+        // Intentar parsear con hora para evitar saltos de día por TZ
+        let d = new Date(dateStr + 'T12:00:00');
+        if (isNaN(d.getTime())) {
+          // Reintentar parseo simple
+          d = new Date(dateStr);
+        }
+        
+        if (isNaN(d.getTime())) {
+          dateEl.textContent = 'Fecha inválida: ' + rawDate;
+        } else {
+          dateEl.textContent = d.toLocaleDateString('es-AR', {
+            day: 'numeric', month: 'long', year: 'numeric'
+          });
+        }
+      } else {
+        dateEl.textContent = 'Fecha no disponible';
+      }
+    } catch (e) {
+      console.error('Error parsing date:', e);
+      dateEl.textContent = 'Error al procesar fecha';
+    }
 
     // QR Code
     const qrUrl = `https://nut-traceability-um.com/batch/${batch.trace_id}`;

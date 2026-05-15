@@ -1,73 +1,88 @@
-// La URL base se lee del archivo .env (EXPO_PUBLIC_API_URL).
-// Si no está definida, cae en la IP local donde corre el nut-api.
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.100.10:8080';
+import { API_URL } from './config';
+import { optimizeImage } from './imageService';
 
-export interface CompleteBatchPayload {
-  remitoImageUri: string;
-  ovenImageUri: string;
-  caliberImageUri: string;
-  farmName: string;
-  harvestType: string;
-  remitoDate: string;
-  ovenId: string;
-  humidity: string;
-  caliber: string;
-  weight: string;
-}
+const DEFAULT_HEADERS = {
+  'Accept': 'application/json',
+  'bypass-tunnel-reminder': '1',
+};
 
-export async function createCompleteBatch(payload: CompleteBatchPayload) {
-  const formData = new FormData();
-  
-  // Añadir imágenes
-  const appendImage = (uri: string, name: string) => {
-    const filename = uri.split('/').pop() || `${name}.jpg`;
-    const type = 'image/jpeg';
-    formData.append(name, {
-      uri,
-      name: filename,
-      type,
-    } as any);
-  };
-
-  appendImage(payload.remitoImageUri, 'remito_image');
-  appendImage(payload.ovenImageUri, 'oven_image');
-  appendImage(payload.caliberImageUri, 'caliber_image');
-
-  // Añadir datos de formulario
-  formData.append('farm_name', payload.farmName);
-  formData.append('harvest_type', payload.harvestType);
-  formData.append('remito_date', payload.remitoDate);
-  formData.append('oven_id', payload.ovenId);
-  formData.append('humidity', payload.humidity);
-  formData.append('caliber', payload.caliber);
-  formData.append('weight', payload.weight);
-
-  console.log(`[BatchAPI] POST /api/v1/batches/complete`);
-  
-  const response = await fetch(`${API_URL}/api/v1/batches/complete`, {
-    method: 'POST',
-    body: formData,
-    headers: {
-      'Accept': 'application/json',
-      // Requerido para que localtunnel no bloquee requests que no son de un navegador
-      'bypass-tunnel-reminder': '1',
-      // Content-Type se auto genera con el boundary de FormData
-    },
-  });
-
+async function handleResponse(response: Response) {
   if (!response.ok) {
     let errorMsg = response.statusText;
     try {
-      const errorJson = await response.json();
-      if (errorJson.detail) {
-        errorMsg = typeof errorJson.detail === 'string' ? errorJson.detail : JSON.stringify(errorJson.detail);
-      }
-    } catch (e) {
-      const errorText = await response.text();
-      if (errorText) errorMsg = errorText;
+      const json = await response.json();
+      if (json.detail) errorMsg = typeof json.detail === 'string' ? json.detail : JSON.stringify(json.detail);
+    } catch {
+      const text = await response.text();
+      if (text) errorMsg = text;
     }
-    throw new Error(`Error en el servidor: ${response.status} - ${errorMsg}`);
+    throw new Error(`Error ${response.status}: ${errorMsg}`);
   }
-
   return response.json();
+}
+
+// ── Fase 1: crear lote con imagen del remito ──────────────────────────────────
+export async function createBatchFromRemito(
+  imageUri: string,
+  ocrData?: { farm_name: string; harvest_type: string; remito_date?: string }
+) {
+  const optimizedUri = await optimizeImage(imageUri);
+  const form = new FormData();
+  form.append('remito_image', { uri: optimizedUri, name: 'remito.jpg', type: 'image/jpeg' } as any);
+  if (ocrData) {
+    form.append('farm_name', ocrData.farm_name);
+    form.append('harvest_type', ocrData.harvest_type);
+    if (ocrData.remito_date) form.append('remito_date', ocrData.remito_date);
+  }
+  const res = await fetch(`${API_URL}/api/v1/batches`, {
+    method: 'POST', body: form, headers: DEFAULT_HEADERS,
+  });
+  return handleResponse(res);
+}
+
+// ── Fase 2: cargar imagen del horno ───────────────────────────────────────────
+export async function addOvenToBatch(
+  serverBatchId: number,
+  imageUri: string,
+  ocrData?: { oven_id: string; humidity: string }
+) {
+  const optimizedUri = await optimizeImage(imageUri);
+  const form = new FormData();
+  form.append('oven_image', { uri: optimizedUri, name: 'oven.jpg', type: 'image/jpeg' } as any);
+  if (ocrData) {
+    form.append('oven_id', ocrData.oven_id);
+    form.append('humidity', ocrData.humidity);
+  }
+  const res = await fetch(`${API_URL}/api/v1/batches/${serverBatchId}/oven`, {
+    method: 'POST', body: form, headers: DEFAULT_HEADERS,
+  });
+  return handleResponse(res);
+}
+
+// ── Fase 3: cargar imagen del calibre ─────────────────────────────────────────
+export async function addCaliberToBatch(
+  serverBatchId: number,
+  imageUri: string,
+  ocrData?: { caliber: string; weight: string }
+) {
+  const optimizedUri = await optimizeImage(imageUri);
+  const form = new FormData();
+  form.append('caliber_image', { uri: optimizedUri, name: 'caliber.jpg', type: 'image/jpeg' } as any);
+  if (ocrData) {
+    form.append('caliber', ocrData.caliber);
+    form.append('weight', ocrData.weight);
+  }
+  const res = await fetch(`${API_URL}/api/v1/batches/${serverBatchId}/caliber`, {
+    method: 'POST', body: form, headers: DEFAULT_HEADERS,
+  });
+  return handleResponse(res);
+}
+
+// ── Paso final: finalizar lote (genera hash + trace_number) ───────────────────
+export async function completeBatch(serverBatchId: number) {
+  const res = await fetch(`${API_URL}/api/v1/batches/${serverBatchId}/complete`, {
+    method: 'POST', headers: DEFAULT_HEADERS,
+  });
+  return handleResponse(res);
+  // Devuelve: { trace_number, hash, status, data: {...}, images: {...} }
 }
