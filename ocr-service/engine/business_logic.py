@@ -43,7 +43,7 @@ def validate_humidity(humidity_str: str) -> tuple[float | None, str | None]:
         logger.warning(f"[HUMIDITY-VALIDATION] {msg}")
         return None, msg
 
-    logger.info(f"[HUMIDITY-VALIDATION] {value:.1f}% dentro del rango [{HUMIDITY_MIN}–{HUMIDITY_MAX}%] ✓")
+    logger.info(f"[HUMIDITY-VALIDATION] {value:.1f}% dentro del rango [{HUMIDITY_MIN}–{HUMIDITY_MAX}%]")
     return value, None
 
 def validate_oven_id(oven_id_str: str) -> tuple[str | None, str | None]:
@@ -61,7 +61,7 @@ def validate_oven_id(oven_id_str: str) -> tuple[str | None, str | None]:
         logger.warning(f"[OVEN-VALIDATION] {msg}")
         return None, msg
 
-    logger.info(f"[OVEN-VALIDATION] Horno Nº{val} válido ✓")
+    logger.info(f"[OVEN-VALIDATION] Horno Nº{val} válido")
     return str(val), None
 
 def normalize_caliber(raw_cal: str) -> str | None:
@@ -120,7 +120,7 @@ def extract_date(raw_text: str) -> str | None:
         day, month, year = m.group(1), m.group(2), m.group(3)
         if len(year) == 2:
             year = f"20{year}"
-        return f"{day.zfill(2)}/{month.zfill(2)}/{year}"
+        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
 
     m = re.search(
         r'(\d{1,2})\s+(?:de\s+)?(' + '|'.join(MESES_ES.keys()) + r')\s+(?:de\s+)?(\d{2,4})',
@@ -132,7 +132,7 @@ def extract_date(raw_text: str) -> str | None:
         year = m.group(3)
         if len(year) == 2:
             year = f"20{year}"
-        return f"{day}/{month}/{year}"
+        return f"{year}-{month}-{day}"
 
     return None
 

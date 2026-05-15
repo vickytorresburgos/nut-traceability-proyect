@@ -1,80 +1,133 @@
+# docker-compose.yml
+# C5: red interna para aislamiento — DB y MinIO no se exponen al host.
+# Los puertos de Postgres y MinIO (9000) son accesibles solo dentro de la red "internal".
+# El único punto de entrada público es Nginx en el puerto 80.
+
+networks:
+  internal:
+    # comunicación privada entre servicios
+    driver: bridge
+  public:
+    # solo Nginx se conecta aquí para recibir tráfico externo
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
+
 services:
+
   postgres:
     image: postgres:16-alpine
     container_name: nut-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: nut_notary
-      POSTGRES_USER: notary
-      POSTGRES_PASSWORD: notary123
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-nut_notary}
+      POSTGRES_USER: ${POSTGRES_USER:-notary}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notary123}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    # Expuesto solo a localhost para DBeaver
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U notary -d nut_notary" ]
-      interval: 5s
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-notary} -d ${POSTGRES_DB:-nut_notary}" ]
+      interval: 60s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   minio:
     image: minio/minio:latest
     container_name: nut-minio
+    restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     volumes:
       - minio_data:/data
+    networks:
+      - internal
+    # Consola MinIO accesible SOLO desde localhost (solo para desarrollo)
+    ports:
+      - "127.0.0.1:9001:9001"
     healthcheck:
-      test: [ "CMD", "mc", "ready", "local" ]
-      interval: 5s
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 60s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   ocr-service:
     build:
       context: ./ocr-service
       dockerfile: Dockerfile
+      target: runtime
     container_name: nut-ocr
-    ports:
-      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - internal
+    # Sin "ports": el OCR no se expone, solo nut-api lo llama internamente
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8081/ocr/health" ]
-      interval: 10s
-      timeout: 5s
+      interval: 60s
+      timeout: 10s
       retries: 3
+      start_period: 60s # tiempo para warmup de EasyOCR
 
   nut-api:
     build:
       context: ./nut-api
       dockerfile: Dockerfile
+      target: runtime
     container_name: nut-api
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+    env_file:
+      - ./nut-api/.env
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: nut_notary
-      POSTGRES_USER: notary
-      POSTGRES_PASSWORD: notary123
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-nut_notary}
+      POSTGRES_USER: ${POSTGRES_USER:-notary}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notary123}
       MINIO_HOST: minio
-      MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: nut-images
+      MINIO_PORT: "9000"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-nut-images}
       OCR_SERVICE_HOST: ocr-service
-      OCR_SERVICE_PORT: 8081
+      OCR_SERVICE_PORT: "8081"
+    networks:
+      - internal
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
       ocr-service:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
-volumes:
-  postgres_data:
-  minio_data:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nut-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "8080:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    networks:
+      - internal
+      - public
+    depends_on:
+      nut-api:
+        condition: service_healthy

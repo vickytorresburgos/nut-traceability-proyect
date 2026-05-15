@@ -2,8 +2,8 @@ import re
 import logging
 from core.schemas import RemitoData, OvenData, CaliberData
 from core.constants import CONFIDENCE_WARN_THRESHOLD, HUMIDITY_MAX
-from engine.vision import preprocess_document, preprocess_display
-from engine.extraction import extract_text_document
+from engine.vision import preprocess_document, preprocess_display, preprocess_handwritten
+from engine.extraction import extract_text_document, _score_result
 from engine.business_logic import (
     _normalize_spaced_text, normalize_farm_name, _truncate_at_field_keyword,
     _find_harvest_type_fuzzy, extract_date, validate_oven_id, validate_humidity,
@@ -12,9 +12,51 @@ from engine.business_logic import (
 
 logger = logging.getLogger("ocr-engine.pipeline")
 
+
+def _extract_best_from_paper(image_path: str) -> tuple[str, float]:
+    """
+    Estrategia en cascada para documentos con texto impreso en papel
+    (remito, calibre). Solo usa Tesseract — sin EasyOCR.
+
+    EasyOCR está optimizado para texto manuscrito/escenas naturales y
+    puede tardar hasta 60s en CPU, causando timeout en el móvil.
+    Para texto impreso, Tesseract en dos pipelines es suficiente y
+    responde en ~5-8s.
+
+    Etapa 1 — RÁPIDA (~2-4s):
+        preprocess_document + Tesseract [PSM 4, 6, 11]
+        Si conf >= CONFIDENCE_WARN_THRESHOLD (55%): retorna inmediatamente.
+
+    Etapa 2 — MEDIA (~+3s, solo si etapa 1 falló):
+        preprocess_handwritten + Tesseract [PSM 4, 6, 11]
+        Devuelve el mejor resultado entre etapa 1 y 2.
+    """
+    # ── Etapa 1: pipeline rápido (texto impreso) ──────────────────────────
+    doc_img = preprocess_document(image_path)
+    doc_text, doc_conf = extract_text_document(doc_img)
+    logger.info(f"[CASCADE-1] Impreso: conf={doc_conf:.1f}%")
+
+    if doc_conf >= CONFIDENCE_WARN_THRESHOLD:
+        logger.info("[CASCADE] Etapa 1 suficiente, saltando manuscrito.")
+        return doc_text, doc_conf
+
+    # ── Etapa 2: pipeline manuscrito (solo si etapa 1 fue insuficiente) ───
+    logger.info("[CASCADE-2] Confianza baja, probando pipeline manuscrito...")
+    hw_img = preprocess_handwritten(image_path)
+    hw_text, hw_conf = extract_text_document(hw_img)
+    logger.info(f"[CASCADE-2] Manuscrito: conf={hw_conf:.1f}%")
+
+    # Devolver el mejor entre etapa 1 y 2
+    if _score_result(hw_text, hw_conf) > _score_result(doc_text, doc_conf):
+        logger.info(f"[CASCADE] Manuscrito ganó: {hw_conf:.1f}% > {doc_conf:.1f}%")
+        return hw_text, hw_conf
+
+    logger.info(f"[CASCADE] Impreso ganó: {doc_conf:.1f}% >= {hw_conf:.1f}%")
+    return doc_text, doc_conf
+
+
 def process_remito_image(image_path: str) -> RemitoData:
-    processed = preprocess_document(image_path)
-    raw_text, confidence = extract_text_document(processed)
+    raw_text, confidence = _extract_best_from_paper(image_path)
 
     logger.info(f"[REMITO] confidence={confidence:.1f}% | raw='{raw_text}'")
 
@@ -69,18 +111,23 @@ def process_remito_image(image_path: str) -> RemitoData:
     )
 
 def process_oven_image(image_path: str) -> OvenData:
+    # Los displays digitales del horno (LCD/LED) no se benefician de EasyOCR:
+    # EasyOCR está optimizado para texto manuscrito/natural, no para dígitos.
+    # Se usa extract_text_document directamente para evitar el timeout de 60s
+    # que causa el corte de conexión del móvil (nginx 499).
     processed = preprocess_display(image_path)
     raw_text, confidence = extract_text_document(processed)
 
     logger.info(f"[OVEN] confidence={confidence:.1f}% | raw='{raw_text[:80]}'")
+    logger.info(f"[OVEN] Sin EasyOCR — pipeline Tesseract únicamente (display digital).")
 
     confidence_alert = confidence < CONFIDENCE_WARN_THRESHOLD
     errors: list[str] = []
 
     oven_id = None
-    oven_sec = re.search(r'(?i)ho?r[nh]o?[^0-9\n]*(\d+)', raw_text)
+    oven_sec = re.search(r'(?i)ho?r[nh]o?[^\d]*(\d+)', raw_text)
     if not oven_sec:
-        oven_sec = re.search(r'(?i)h[o0]r.*?(\d+)', raw_text)
+        oven_sec = re.search(r'(?i)h[o0]r[^\d]*(\d+)', raw_text)
     if oven_sec:
         raw_oven = oven_sec.group(1)
         oven_id, oven_err = validate_oven_id(raw_oven)
@@ -90,7 +137,7 @@ def process_oven_image(image_path: str) -> OvenData:
         errors.append("No se detectó el número de horno en la imagen.")
 
     humidity = None
-    hum_sec = re.search(r'(?i)h[uv][\w\s]*d[aá]d[:\s]*(.*?)(?=\r|\n|$)', raw_text)
+    hum_sec = re.search(r'(?i)[h]?[uv][a-záéíóú\s]*d[aá]d[^\d]*(\d+[.,]?\d*\s*%?)', raw_text)
     if not hum_sec:
         hum_sec = re.search(r'(?i)hu[a-z\s]*?(\d+[.,]\d+\s*%?)', raw_text)
 
@@ -125,31 +172,41 @@ def process_oven_image(image_path: str) -> OvenData:
     )
 
 def process_caliber_image(image_path: str) -> CaliberData:
-    processed = preprocess_document(image_path)
-    raw_text, confidence = extract_text_document(processed)
+    raw_text, confidence = _extract_best_from_paper(image_path)
 
-    logger.info(f"[CALIBER] confidence={confidence:.1f}% | raw='{raw_text[:80]}'")
+    logger.info(f"[CALIBER] confidence={confidence:.1f}% | raw='{raw_text[:120]}'")
 
     confidence_alert = confidence < CONFIDENCE_WARN_THRESHOLD
 
     caliber = None
-    cal_sec = re.search(r'(?i)c\s*a\s*l[a-z\s]*(.*?)(?=\r|\n|peso|$)', raw_text)
+    # Busca 'calibre' (con posibles espacios internos) seguido de ':' y luego
+    # el número, permitiendo saltos de línea entre la keyword y el valor.
+    cal_sec = re.search(
+        r'(?i)c\s*a\s*l[a-z\s]*:?\s*[\r\n\s]*(\d+(?:\s*[\-\.]\s*\d+)?)',
+        raw_text, re.DOTALL
+    )
     if cal_sec:
-        dirty_c = cal_sec.group(1)
-        clean_c = clean_ocr_number_section(dirty_c, "ibre")
-        c_match = re.search(r'(\d+(?:\s*[\.\-]\s*\d+)?)', clean_c)
-        if c_match:
-            raw_cal = c_match.group(1).replace('.', '-')
-            caliber = normalize_caliber(raw_cal)
+        raw_cal = cal_sec.group(1).replace(' ', '').replace('.', '-')
+        caliber = normalize_caliber(raw_cal)
+        logger.info(f"[CALIBER] Extraído: '{raw_cal}' -> normalizado: '{caliber}'")
+    else:
+        logger.warning("[CALIBER] No se encontró el calibre en el texto.")
 
     weight = None
-    peso_sec = re.search(r'(?i)peso[a-z:=;\s\-,\.]*([\d]+[.,]?[\d]*)', raw_text)
+    # Busca 'peso' seguido de ':' y el número, permitiendo saltos de línea.
+    peso_sec = re.search(
+        r'(?i)peso\s*:?\s*[\r\n\s]*(\d+[.,]?\d*)',
+        raw_text, re.DOTALL
+    )
     if peso_sec:
         w_str = peso_sec.group(1).replace(',', '.')
         try:
             weight = f"{float(w_str):.1f}kg"
+            logger.info(f"[CALIBER] Peso extraído: '{weight}'")
         except ValueError:
-            pass
+            logger.warning(f"[CALIBER] No se pudo parsear el peso: '{w_str}'")
+    else:
+        logger.warning("[CALIBER] No se detectó el peso en el texto.")
 
     return CaliberData(
         raw_text=raw_text,

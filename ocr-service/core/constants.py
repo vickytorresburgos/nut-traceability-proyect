@@ -1,5 +1,5 @@
-CONFIDENCE_REJECT_THRESHOLD = 20.0
-CONFIDENCE_WARN_THRESHOLD   = 40.0
+CONFIDENCE_REJECT_THRESHOLD = 35.0   # antes: 20.0  — umbral para rechazar con HTTP 400
+CONFIDENCE_WARN_THRESHOLD   = 55.0   # antes: 40.0  — umbral para activar confidence_alert
 
 KNOWN_FARMS = [
     'LOS TILOS', 'LAS FLORES', 'LOS ANDES', 'LOS CAPOS',
