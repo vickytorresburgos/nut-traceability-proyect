@@ -15,7 +15,35 @@
  */
 
 import { optimizeImage } from './imageService';
-import { API_URL as API_BASE } from './config';
+import { API_URL as API_BASE, API_KEY } from './config';
+
+// ── Tipos de respuesta del OCR ─────────────────────────────────────────────
+
+export interface RemitoOcrResult {
+  raw_text: string;
+  farm_name: string | null;
+  harvest_type: string | null;
+  date: string | null;
+  confidence: number;
+  confidence_alert: boolean;
+}
+
+export interface OvenOcrResult {
+  raw_text: string;
+  oven_id: string | null;
+  humidity: string | null;
+  confidence: number;
+  confidence_alert: boolean;
+  errors: any[];
+}
+
+export interface CaliberOcrResult {
+  raw_text: string;
+  caliber: string | null;
+  weight: string | null;
+  confidence: number;
+  confidence_alert: boolean;
+}
 
 /** Timeout en milisegundos para las llamadas OCR (el motor puede tardar con EasyOCR) */
 const OCR_TIMEOUT_MS = 150_000; // 150 segundos
@@ -67,13 +95,18 @@ async function postImageToApi(endpoint: string, imageUri: string, imageName: str
       }
 
       console.log(`[ocrApi] Llamando a: ${url}`);
+
+      const headers: Record<string, string> = {
+        'bypass-tunnel-reminder': '1',
+      };
+      if (API_KEY) {
+        headers['X-API-KEY'] = API_KEY;
+      }
+
       const response = await fetchWithTimeout(url, {
         method: 'POST',
         body: form,
-        headers: {
-          // Requerido para que localtunnel no bloquee requests que no son de un navegador
-          'bypass-tunnel-reminder': '1',
-        },
+        headers: headers,
       }, OCR_TIMEOUT_MS);
 
       let body: any;

@@ -18,6 +18,7 @@ class Settings:
 
     OCR_SERVICE_HOST = os.getenv("OCR_SERVICE_HOST", "ocr")
     OCR_SERVICE_PORT = os.getenv("OCR_SERVICE_PORT", "8081")
+    API_KEY = os.getenv("API_KEY")
 
 settings = Settings()
 

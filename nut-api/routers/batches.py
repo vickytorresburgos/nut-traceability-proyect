@@ -15,10 +15,11 @@ from crud import (
 )
 from services import upload_image_to_storage, extract_data_with_ocr, calculate_sha256
 from core.constants import HARVEST_TYPES, STATUS_PENDING, STATUS_COMPLETED
+from core.security import validate_api_key
 
 router = APIRouter()
 
-@router.post("")
+@router.post("", dependencies=[Depends(validate_api_key)])
 async def create_batch_remito(
     remito_image: UploadFile = File(...),
     # Datos OCR pre-extraidos (opcionales):
@@ -39,21 +40,13 @@ async def create_batch_remito(
             ocr_result = await extract_data_with_ocr(
                 file_bytes, filename, content_type, "/ocr/remito"
             )
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+            farm_name = farm_name or ocr_result.get("farm_name")
+            harvest_type = harvest_type or ocr_result.get("harvest_type")
+            remito_date = remito_date or ocr_result.get("date")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"OCR Service no disponible: {str(e)}")
-        farm_name = ocr_result.get("farm_name")
-        harvest_type = ocr_result.get("harvest_type")
-        remito_date = remito_date or ocr_result.get("date")
-
-    if not farm_name:
-        raise HTTPException(status_code=400, detail="No se pudo extraer la finca del remito.")
-    if harvest_type not in HARVEST_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No se identificó el tipo de cosecha válido. Debe ser uno de {HARVEST_TYPES}.",
-        )
+            # Si el OCR falla, permitimos crear el lote sin datos (se completarán manual)
+            # Logueamos el error pero no bloqueamos el flujo
+            print(f"OCR falló en create_batch: {str(e)}")
 
     try:
         image_url = upload_image_to_storage(filename, file_bytes, content_type)
@@ -81,7 +74,7 @@ async def create_batch_remito(
     }
 
 
-@router.post("/{batch_id}/oven")
+@router.post("/{batch_id}/oven", dependencies=[Depends(validate_api_key)])
 async def update_batch_oven_endpoint(
     batch_id: int,
     oven_image: UploadFile = File(...),
@@ -133,7 +126,7 @@ async def update_batch_oven_endpoint(
 
 
 
-@router.post("/{batch_id}/caliber")
+@router.post("/{batch_id}/caliber", dependencies=[Depends(validate_api_key)])
 async def update_batch_caliber_endpoint(
     batch_id: int,
     caliber_image: UploadFile = File(...),
@@ -183,7 +176,7 @@ async def update_batch_caliber_endpoint(
 
 
 
-@router.post("/{batch_id}/complete")
+@router.post("/{batch_id}/complete", dependencies=[Depends(validate_api_key)])
 async def complete_batch_endpoint(
     batch_id: int,
     db: Session = Depends(get_db),
@@ -192,11 +185,35 @@ async def complete_batch_endpoint(
     Paso final del flujo step-by-step.
     Lee los datos de las 3 fases ya guardadas en DB, genera el hash SHA-256
     y el trace_number, y marca el lote como COMPLETED.
-    Requiere que remito, horno y calibre hayan sido procesados previamente.
+    Si el lote ya está COMPLETED, devuelve los datos actuales (idempotencia).
     """
     batch = get_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Lote no encontrado")
+
+    # ── Idempotencia: si ya está finalizado, devolver datos actuales ─────────
+    if batch.status == STATUS_COMPLETED:
+        return {
+            "message": "El lote ya estaba finalizado",
+            "batch_id": batch.id,
+            "trace_number": batch.trace_number,
+            "status": batch.status,
+            "hash": batch.sha256_hash,
+            "data": {
+                "farm_name": batch.farm_name,
+                "harvest_type": batch.harvest_type,
+                "date": batch.remito_date,
+                "oven_id": batch.oven_id,
+                "humidity": batch.humidity,
+                "caliber": batch.caliber,
+                "weight": batch.weight,
+            },
+            "images": {
+                "remito": batch.remito_image_url,
+                "oven": batch.oven_image_url,
+                "caliber": batch.caliber_image_url,
+            },
+        }
 
     # Validar que las 3 fases están completas antes de finalizar
     missing = []

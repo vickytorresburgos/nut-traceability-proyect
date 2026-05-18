@@ -3,7 +3,6 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { runCaliberOcr } from '../../src/services/ocrApi';
-import { addCaliberToBatch, completeBatch } from '../../src/services/batchApi';
 
 export default function ValidateCaliberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -60,9 +59,6 @@ export default function ValidateCaliberScreen() {
 
     setIsSaving(true);
     try {
-      // ACTUALIZACIÓN OFFLINE-FIRST:
-      // Encolamos la operación ADD_CALIBER y COMPLETE_BATCH. 
-      
       await db.updateBatchCaliber(batch.id, caliber, weight);
 
       await db.enqueue(batch.id, 'ADD_CALIBER', {
@@ -71,9 +67,6 @@ export default function ValidateCaliberScreen() {
       });
 
       await db.enqueue(batch.id, 'COMPLETE_BATCH', {});
-
-      // Navegar a resultados. El ResultsScreen ya maneja el fetch del server 
-      // si el lote aún no tiene trace_number localmente.
       router.replace({ 
         pathname: '/batch/results', 
         params: { 

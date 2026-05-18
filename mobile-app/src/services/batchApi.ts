@@ -1,10 +1,14 @@
-import { API_URL } from './config';
+import { API_URL, API_KEY } from './config';
 import { optimizeImage } from './imageService';
 
-const DEFAULT_HEADERS = {
+const DEFAULT_HEADERS: Record<string, string> = {
   'Accept': 'application/json',
   'bypass-tunnel-reminder': '1',
 };
+
+if (API_KEY) {
+  DEFAULT_HEADERS['X-API-KEY'] = API_KEY;
+}
 
 async function handleResponse(response: Response) {
   if (!response.ok) {
@@ -21,7 +25,6 @@ async function handleResponse(response: Response) {
   return response.json();
 }
 
-// ── Fase 1: crear lote con imagen del remito ──────────────────────────────────
 export async function createBatchFromRemito(
   imageUri: string,
   ocrData?: { farm_name: string; harvest_type: string; remito_date?: string }
@@ -40,7 +43,6 @@ export async function createBatchFromRemito(
   return handleResponse(res);
 }
 
-// ── Fase 2: cargar imagen del horno ───────────────────────────────────────────
 export async function addOvenToBatch(
   serverBatchId: number,
   imageUri: string,
@@ -59,7 +61,6 @@ export async function addOvenToBatch(
   return handleResponse(res);
 }
 
-// ── Fase 3: cargar imagen del calibre ─────────────────────────────────────────
 export async function addCaliberToBatch(
   serverBatchId: number,
   imageUri: string,
@@ -78,11 +79,9 @@ export async function addCaliberToBatch(
   return handleResponse(res);
 }
 
-// ── Paso final: finalizar lote (genera hash + trace_number) ───────────────────
 export async function completeBatch(serverBatchId: number) {
   const res = await fetch(`${API_URL}/api/v1/batches/${serverBatchId}/complete`, {
     method: 'POST', headers: DEFAULT_HEADERS,
   });
   return handleResponse(res);
-  // Devuelve: { trace_number, hash, status, data: {...}, images: {...} }
 }

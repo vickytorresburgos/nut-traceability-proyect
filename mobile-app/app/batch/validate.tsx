@@ -1,5 +1,5 @@
 /**
- * app/batch/validate.tsx — Pantalla de Confirmación de Datos OCR (HU-04.01 / 04.02)
+ * app/batch/validate.tsx — Pantalla de Confirmación de Datos OCR
  *
  * Flujo:
  *  1. Recibe `id` del lote local (NutBatch.id)
@@ -33,7 +33,6 @@ export default function ValidateScreen() {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Campos editables
   const [farmName, setFarmName] = useState('');
   const [harvestType, setHarvestType] = useState<'manual' | 'mecanica'>('mecanica');
   const [date, setDate] = useState('');
@@ -48,7 +47,6 @@ export default function ValidateScreen() {
       setBatch(b);
       setCaptura(c);
       
-      // Corregido: disparar OCR si farm_name es null o vacío
       if (b && c && (!b.farm_name || b.farm_name === '')) {
         try {
           console.log(`[Validate] Disparando OCR para remito: ${c.local_path}`);
@@ -62,9 +60,6 @@ export default function ValidateScreen() {
           setFarmName(fName);
           setHarvestType(hType);
           setDate(parsedDate);
-
-          // Guardar datos OCR en la DB local SIN asignar trace_number todavía.
-          // El trace_number se genera y asigna en save() cuando el operario confirma.
           await db.updateBatchOcrData(b.id, fName, hType, parsedDate);
 
 
@@ -114,21 +109,12 @@ export default function ValidateScreen() {
     if (!batch || !captura || isSaving) return;
     setIsSaving(true);
     try {
-      // ACTUALIZACIÓN OFFLINE-FIRST:
-      // En lugar de llamar a la API directamente, encolamos la operación.
-      // El SyncManager se encargará de subir la imagen y los datos cuando haya red.
-      
-      // 1. Guardar los detalles validados por el operario en SQLite local
       await db.updateBatchDetails(batch.id, farmName.toUpperCase(), harvestType, date, null);
-
-      // 2. Encolar la creación del lote en el servidor
       await db.enqueue(batch.id, 'CREATE_BATCH', {
         farm_name: farmName.toUpperCase(),
         harvest_type: harvestType,
         remito_date: date,
       });
-
-      // 3. Continuar al siguiente paso sin esperar al servidor
       router.navigate(`/camera?type=oven&batchId=${batch.id}`);
     } catch (err: any) {
       console.error('Error al encolar lote:', err);
@@ -149,7 +135,6 @@ export default function ValidateScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.back}>← Volver</Text>
@@ -158,7 +143,6 @@ export default function ValidateScreen() {
         <SyncStatusBadge status={batch?.status ?? 'PENDING'} />
       </View>
 
-      {/* Miniatura de la foto */}
       {captura && (
         <View style={styles.imageContainer}>
           <Image source={{ uri: captura.local_path }} style={styles.thumbnail} />
@@ -175,16 +159,13 @@ export default function ValidateScreen() {
         </View>
       )}
 
-      {/* Aviso */}
       <View style={styles.warningBox}>
         <Text style={styles.warningText}>
           Revisá los datos obtenidos por el escáner antes de guardar. Si hay algún error, deberás volver a tomar la foto.
         </Text>
       </View>
 
-      {/* Formulario */}
       <View style={styles.form}>
-        {/* Finca */}
         <Text style={styles.label}>FINCA</Text>
         <View style={styles.pickerWrap}>
           {farmName ? (
@@ -198,7 +179,6 @@ export default function ValidateScreen() {
           )}
         </View>
 
-        {/* Tipo de cosecha */}
         <Text style={styles.label}>TIPO DE COSECHA</Text>
         <View style={styles.row}>
           {(['mecanica', 'manual'] as const).map((t) => (
@@ -213,7 +193,6 @@ export default function ValidateScreen() {
           ))}
         </View>
 
-        {/* Fecha */}
         <Text style={styles.label}>FECHA</Text>
         <TextInput
           style={[styles.input, { opacity: 0.8 }]}
@@ -224,7 +203,6 @@ export default function ValidateScreen() {
         />
       </View>
 
-      {/* Estado de conexión */}
       <View style={styles.offlineBanner}>
         <Text style={styles.offlineText}>
           Los datos se guardarán localmente y se sincronizarán al recuperar conexión.

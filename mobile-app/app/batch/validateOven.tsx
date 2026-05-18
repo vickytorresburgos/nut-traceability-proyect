@@ -3,7 +3,6 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { runOvenOcr } from '../../src/services/ocrApi';
-import { addOvenToBatch } from '../../src/services/batchApi';
 
 export default function ValidateOvenScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -64,10 +63,6 @@ export default function ValidateOvenScreen() {
     if (!batch || !captura) return;
 
     try {
-      // ACTUALIZACIÓN OFFLINE-FIRST:
-      // Encolamos la operación ADD_OVEN. El SyncManager esperará a que el lote 
-      // tenga server_id (tras CREATE_BATCH) para ejecutar esta petición.
-      
       await db.updateBatchOven(id, ovenId, humidity);
       
       await db.enqueue(batch.id, 'ADD_OVEN', {

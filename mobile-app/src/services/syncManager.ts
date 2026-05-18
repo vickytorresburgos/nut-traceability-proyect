@@ -14,7 +14,7 @@ import * as Crypto from 'expo-crypto';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import { db, SyncQueueItem, Captura } from '../db/database';
 
-import { API_URL as API_BASE } from './config';
+import { API_URL as API_BASE, API_KEY } from './config';
 import { optimizeImage } from './imageService';
 const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 2_000; // 2s * 2^attempt
@@ -181,9 +181,13 @@ class SyncManager {
     if (payload.harvest_type) form.append('harvest_type', payload.harvest_type);
     if (payload.remito_date) form.append('remito_date', payload.remito_date);
 
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers['X-API-KEY'] = API_KEY;
+
     const res = await fetch(`${API_BASE}/api/v1/batches`, {
       method: 'POST',
       body: form,
+      headers: headers,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
 
@@ -211,9 +215,13 @@ class SyncManager {
     if (payload.oven_id) form.append('oven_id', payload.oven_id);
     if (payload.humidity) form.append('humidity', payload.humidity);
 
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers['X-API-KEY'] = API_KEY;
+
     const res = await fetch(`${API_BASE}/api/v1/batches/${lote.server_id}/oven`, {
       method: 'POST',
       body: form,
+      headers: headers,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
   }
@@ -238,9 +246,13 @@ class SyncManager {
     if (payload.caliber) form.append('caliber', payload.caliber);
     if (payload.weight) form.append('weight', payload.weight);
 
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers['X-API-KEY'] = API_KEY;
+
     const res = await fetch(`${API_BASE}/api/v1/batches/${lote.server_id}/caliber`, {
       method: 'POST',
       body: form,
+      headers: headers,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
   }
@@ -249,8 +261,12 @@ class SyncManager {
     const lote = await db.getBatchById(item.lote_id);
     if (!lote?.server_id) throw new Error('server_id aún no disponible');
 
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers['X-API-KEY'] = API_KEY;
+
     const res = await fetch(`${API_BASE}/api/v1/batches/${lote.server_id}/complete`, {
       method: 'POST',
+      headers: headers,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     

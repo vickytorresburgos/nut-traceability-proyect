@@ -1,5 +1,5 @@
 /**
- * app/batch/qr.tsx — Pantalla de QR del Lote (HU-04.04)
+ * app/batch/qr.tsx — Pantalla de QR del Lote
  *
  * Muestra el QR generado localmente con la URL del dashboard público.
  * Funciona 100% offline — el QR se genera en cliente con react-native-qrcode-svg.
@@ -37,12 +37,24 @@ export default function QRScreen() {
   const isProvisional = batch.server_id == null;
 
   const handleShare = async () => {
-    await Share.share({ message: `Lote ${traceId}\n${qrUrl}` });
+    if (!batch) return;
+
+    const details = [
+      `Finca: ${batch.farm_name ?? '—'}`,
+      `Cosecha: ${batch.harvest_type ?? '—'}`,
+      `Fecha: ${batch.remito_date ?? '—'}`,
+      `Humedad: ${batch.humidity ?? '—'}`,
+      `Calibre: ${batch.caliber ?? '—'}`,
+      `Peso: ${batch.weight ?? '—'}`,
+    ].join('\n');
+
+    const message = `¡Hola! Te envío los datos del lote ${traceId}:\n\n${details}\n\nLink al dashboard: ${qrUrl}`;
+    
+    await Share.share({ message });
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.back}>←</Text>
@@ -51,7 +63,6 @@ export default function QRScreen() {
         <View style={{ width: 32 }} />
       </View>
 
-      {/* Trace ID */}
       <View style={styles.traceBox}>
         <Text style={styles.traceLabel}>Número de Traza</Text>
         <Text style={styles.traceId}>{traceId}</Text>
@@ -62,7 +73,6 @@ export default function QRScreen() {
         )}
       </View>
 
-      {/* QR */}
       <View style={styles.qrContainer}>
         <QRCode
           value={qrUrl}
@@ -76,7 +86,6 @@ export default function QRScreen() {
         <Text style={styles.qrUrl}>{qrUrl}</Text>
       </TouchableOpacity>
 
-      {/* Resumen del lote */}
       <View style={styles.summary}>
         <Row label="Finca" value={batch.farm_name ?? '—'} />
         <Row label="Cosecha" value={batch.harvest_type ?? '—'} />
@@ -86,7 +95,6 @@ export default function QRScreen() {
         <Row label="Peso" value={batch.weight ?? '—'} />
       </View>
 
-      {/* Hash */}
       {batch.sha256_hash && (
         <View style={styles.hashBox}>
           <Text style={styles.hashLabel}>Sello SHA-256</Text>
@@ -94,7 +102,7 @@ export default function QRScreen() {
         </View>
       )}
 
-      {/* Acciones */}
+      {/* Accines */}
       <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
         <Text style={styles.shareBtnText}>↑ Compartir</Text>
       </TouchableOpacity>

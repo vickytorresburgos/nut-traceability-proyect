@@ -31,12 +31,14 @@ async def _proxy_to_ocr(image: UploadFile, ocr_endpoint: str) -> dict:
     """Reenvía la imagen al OCR service y devuelve la respuesta JSON."""
     file_bytes = await image.read()
     files = {"image": (image.filename or "upload.jpg", file_bytes, image.content_type or "image/jpeg")}
+    headers = {"X-API-KEY": settings.API_KEY} if settings.API_KEY else {}
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{OCR_BASE}{ocr_endpoint}",
                 files=files,
+                headers=headers,
                 timeout=OCR_TIMEOUT,
             )
     except httpx.TimeoutException:

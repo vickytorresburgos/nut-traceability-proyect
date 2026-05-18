@@ -5,7 +5,7 @@ import logging
 import traceback
 from functools import partial
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 
 from engine.pipeline import (
     process_remito_image,
@@ -14,6 +14,7 @@ from engine.pipeline import (
 )
 from core.constants import CONFIDENCE_REJECT_THRESHOLD
 from core.logging_config import configure_logging
+from core.security import validate_api_key
 
 app = FastAPI(title="Nut Traceability — OCR Service", version="2.1.0")
 
@@ -125,19 +126,19 @@ async def process_generic(image: UploadFile, processor_func):
             os.unlink(tmp_path)
 
 
-@app.post("/ocr/remito", response_model=RemitoResponse)
+@app.post("/ocr/remito", response_model=RemitoResponse, dependencies=[Depends(validate_api_key)])
 async def process_remito(image: UploadFile = File(...)):
     result = await process_generic(image, process_remito_image)
     return RemitoResponse(**result)
 
 
-@app.post("/ocr/oven", response_model=OvenResponse)
+@app.post("/ocr/oven", response_model=OvenResponse, dependencies=[Depends(validate_api_key)])
 async def process_oven(image: UploadFile = File(...)):
     result = await process_generic(image, process_oven_image)
     return OvenResponse(**result)
 
 
-@app.post("/ocr/caliber", response_model=CaliberResponse)
+@app.post("/ocr/caliber", response_model=CaliberResponse, dependencies=[Depends(validate_api_key)])
 async def process_caliber(image: UploadFile = File(...)):
     result = await process_generic(image, process_caliber_image)
     return CaliberResponse(**result)
