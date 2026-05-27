@@ -25,8 +25,6 @@ logger = logging.getLogger("ocr-service")
 @app.on_event("startup")
 async def startup_event():
     configure_logging()  # silencia /ocr/health del access log
-    # EasyOCR eliminado de todos los pipelines (texto impreso en papel/display
-    # digital): Tesseract en cascada es suficiente y responde en <10s.
 
 
 # ---------------------------------------------------------------------------

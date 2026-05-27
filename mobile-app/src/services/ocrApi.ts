@@ -45,7 +45,7 @@ export interface CaliberOcrResult {
   confidence_alert: boolean;
 }
 
-/** Timeout en milisegundos para las llamadas OCR (el motor puede tardar con EasyOCR) */
+/** Timeout en milisegundos para las llamadas OCR */
 const OCR_TIMEOUT_MS = 150_000; // 150 segundos
 
 // ---------------------------------------------------------------------------
