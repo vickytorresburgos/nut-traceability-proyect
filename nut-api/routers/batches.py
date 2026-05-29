@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import uuid
 import json
+import datetime
 
 from database import get_db
 from crud import (
@@ -16,6 +17,7 @@ from crud import (
 from services import upload_image_to_storage, extract_data_with_ocr, calculate_sha256
 from core.constants import HARVEST_TYPES, STATUS_PENDING, STATUS_COMPLETED
 from core.security import validate_api_key
+from blockchain_service import get_blockchain_service
 
 router = APIRouter()
 
@@ -175,10 +177,10 @@ async def update_batch_caliber_endpoint(
     }
 
 
-
 @router.post("/{batch_id}/complete", dependencies=[Depends(validate_api_key)])
 async def complete_batch_endpoint(
     batch_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -186,12 +188,15 @@ async def complete_batch_endpoint(
     Lee los datos de las 3 fases ya guardadas en DB, genera el hash SHA-256
     y el trace_number, y marca el lote como COMPLETED.
     Si el lote ya está COMPLETED, devuelve los datos actuales (idempotencia).
+
+    Luego del commit, lanza el anclaje blockchain en background (no bloquea la respuesta).
+    El blockchain_tx_hash se actualiza en DB cuando la transacción confirma.
     """
     batch = get_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Lote no encontrado")
 
-    # ── Idempotencia: si ya está finalizado, devolver datos actuales ─────────
+    # ── Idempotencia: si ya está finalizado, devolver datos actuales ───────────
     if batch.status == STATUS_COMPLETED:
         return {
             "message": "El lote ya estaba finalizado",
@@ -199,6 +204,8 @@ async def complete_batch_endpoint(
             "trace_number": batch.trace_number,
             "status": batch.status,
             "hash": batch.sha256_hash,
+            "blockchain_status": "anchored" if batch.blockchain_tx_hash else "pending",
+            "blockchain_tx_hash": batch.blockchain_tx_hash,
             "data": {
                 "farm_name": batch.farm_name,
                 "harvest_type": batch.harvest_type,
@@ -229,12 +236,39 @@ async def complete_batch_endpoint(
 
     batch = finalize_batch(db, batch)
 
+    # ── Anclaje blockchain en background (no bloquea la respuesta al móvil) ──
+    # sha256_hash (payload del lote) se ancla en el contrato.
+    # blockchain_tx_hash (ID de la tx) se guarda en DB cuando confirma.
+    batch_id_for_bg = batch.id
+    trace_number_for_bg = batch.trace_number
+    sha256_for_bg = batch.sha256_hash
+
+    async def _anchor_task():
+        blockchain = get_blockchain_service()
+        tx_hash = await blockchain.anchor_hash(trace_number_for_bg, sha256_for_bg)
+        if tx_hash:
+            # Abrir nueva sesión DB: la sesión original ya fue cerrada
+            from database import SessionLocal
+            bg_db = SessionLocal()
+            try:
+                bg_batch = get_batch(bg_db, batch_id_for_bg)
+                if bg_batch:
+                    bg_batch.blockchain_tx_hash = tx_hash
+                    bg_batch.blockchain_anchored_at = datetime.datetime.utcnow()
+                    bg_db.commit()
+            finally:
+                bg_db.close()
+
+    background_tasks.add_task(_anchor_task)
+
     return {
         "message": "Lote finalizado exitosamente",
         "batch_id": batch.id,
         "trace_number": batch.trace_number,
         "status": batch.status,
         "hash": batch.sha256_hash,
+        "blockchain_status": "pending",
+        "blockchain_tx_hash": None,
         "data": {
             "farm_name": batch.farm_name,
             "harvest_type": batch.harvest_type,
@@ -279,3 +313,45 @@ async def get_batch_by_trace(
             "caliber": batch.caliber_image_url,
         },
     }
+
+
+@router.get("/by-trace/{trace_number}/verify")
+async def verify_batch_on_chain(
+    trace_number: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Verifica que el sha256_hash del lote coincide con lo registrado en la blockchain.
+
+    - sha256_hash:        huella SHA-256 del contenido del lote (generada por Python)
+    - blockchain_tx_hash: ID de la transacción que ancló el hash (generado por la red)
+
+    Endpoint público — accesible desde el dashboard QR sin autenticación.
+    """
+    batch = get_batch_by_trace_number(db, trace_number)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+
+    result = {
+        "trace_number": trace_number,
+        "sha256_hash": batch.sha256_hash,
+        # blockchain_tx_hash ≠ sha256_hash:
+        #   sha256_hash → huella de los datos del lote
+        #   blockchain_tx_hash → ID de la transacción en la red
+        "blockchain_tx_hash": batch.blockchain_tx_hash,
+        "blockchain_anchored": batch.blockchain_tx_hash is not None,
+        "blockchain_anchored_at": (
+            batch.blockchain_anchored_at.isoformat()
+            if batch.blockchain_anchored_at
+            else None
+        ),
+        "blockchain_verification": None,
+    }
+
+    # Si hay hash y blockchain habilitada, verificar on-chain
+    blockchain = get_blockchain_service()
+    if blockchain.enabled and batch.sha256_hash:
+        verification = await blockchain.verify_on_chain(trace_number, batch.sha256_hash)
+        result["blockchain_verification"] = verification
+
+    return result
