@@ -16,12 +16,9 @@ logger = logging.getLogger("ocr-engine.pipeline")
 def _extract_best_from_paper(image_path: str) -> tuple[str, float]:
     """
     Estrategia en cascada para documentos con texto impreso en papel
-    (remito, calibre). Solo usa Tesseract — sin EasyOCR.
+    (remito, calibre).
 
-    EasyOCR está optimizado para texto manuscrito/escenas naturales y
-    puede tardar hasta 60s en CPU, causando timeout en el móvil.
-    Para texto impreso, Tesseract en dos pipelines es suficiente y
-    responde en ~5-8s.
+    Tesseract en dos pipelines es suficiente y responde en ~5-8s.
 
     Etapa 1 — RÁPIDA (~2-4s):
         preprocess_document + Tesseract [PSM 4, 6, 11]
@@ -111,15 +108,10 @@ def process_remito_image(image_path: str) -> RemitoData:
     )
 
 def process_oven_image(image_path: str) -> OvenData:
-    # Los displays digitales del horno (LCD/LED) no se benefician de EasyOCR:
-    # EasyOCR está optimizado para texto manuscrito/natural, no para dígitos.
-    # Se usa extract_text_document directamente para evitar el timeout de 60s
-    # que causa el corte de conexión del móvil (nginx 499).
     processed = preprocess_display(image_path)
     raw_text, confidence = extract_text_document(processed)
 
     logger.info(f"[OVEN] confidence={confidence:.1f}% | raw='{raw_text[:80]}'")
-    logger.info(f"[OVEN] Sin EasyOCR — pipeline Tesseract únicamente (display digital).")
 
     confidence_alert = confidence < CONFIDENCE_WARN_THRESHOLD
     errors: list[str] = []
@@ -179,8 +171,6 @@ def process_caliber_image(image_path: str) -> CaliberData:
     confidence_alert = confidence < CONFIDENCE_WARN_THRESHOLD
 
     caliber = None
-    # Busca 'calibre' (con posibles espacios internos) seguido de ':' y luego
-    # el número, permitiendo saltos de línea entre la keyword y el valor.
     cal_sec = re.search(
         r'(?i)c\s*a\s*l[a-z\s]*:?\s*[\r\n\s]*(\d+(?:\s*[\-\.]\s*\d+)?)',
         raw_text, re.DOTALL
@@ -193,7 +183,6 @@ def process_caliber_image(image_path: str) -> CaliberData:
         logger.warning("[CALIBER] No se encontró el calibre en el texto.")
 
     weight = None
-    # Busca 'peso' seguido de ':' y el número, permitiendo saltos de línea.
     peso_sec = re.search(
         r'(?i)peso\s*:?\s*[\r\n\s]*(\d+[.,]?\d*)',
         raw_text, re.DOTALL

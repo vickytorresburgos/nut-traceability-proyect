@@ -28,21 +28,13 @@ export default function ImageEditorScreen() {
     
     try {
       console.log(`[Editor] Procesando imagen: rotación=${rotation}°, tipo=${type}`);
-      
-      // Aplicamos la rotación físicamente a los píxeles
-      // Esto genera una nueva imagen 'upright' (vertical o horizontal según la rotación elegida)
-      // sin depender de metadatos EXIF que se pierden luego.
       const result = await ImageManipulator.manipulateAsync(
         uri,
         rotation !== 0 ? [{ rotate: rotation }] : [],
         { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
       );
-
-      // Persistimos la captura FINAL en la base de datos local
-      // saveCaptura calcula el hash SHA-256 e inicia la integridad local.
       await db.saveCaptura(batchId, type, result.uri);
 
-      // Navegamos a la validación correspondiente
       if (type === 'remito') {
         router.replace({ pathname: '/batch/validate', params: { id: batchId } });
       } else if (type === 'oven') {

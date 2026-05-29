@@ -7,4 +7,3 @@ pytesseract>=0.3.10
 numpy>=1.26.0
 Pillow>=10.3.0
 rapidFuzz>=3.7.0
-easyocr>=1.7.0

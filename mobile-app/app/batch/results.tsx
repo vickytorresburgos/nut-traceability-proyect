@@ -15,15 +15,8 @@ export default function ResultsScreen() {
 
   useEffect(() => {
     (async () => {
-      // Intentamos recuperar el batch usando la API local (TODO: en DB no tenemos el hash si no lo guardamos)
-      // Como acabamos de llamar a createCompleteBatch, lo mejor es hacer un GET o simplemente
-      // mostrar los datos guardados en SQLite. Para simplificar, buscamos en DB local:
-      
       const batches = await db.getBatchesForToday();
-      // Ojo, en validateCaliber guardamos en queue, pero no actualizamos el lote local con el trace_number del server
-      // Lo ideal es tener un query por trace_number
       const b = batches.find(b => b.trace_number === trace_number);
-      // Hack for now, wait a bit or use another method. Actually we need to fetch from server to get the hash!
       try {
         const response = await fetch(`${API_URL}/api/v1/batches/by-trace/${trace_number}`);
         if (response.ok) {

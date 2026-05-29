@@ -1,5 +1,5 @@
 /**
- * app/(tabs)/index.tsx — Listado de Lotes del Día (HU-04.03)
+ * app/(tabs)/index.tsx — Listado de Lotes del Día
  *
  * Muestra los lotes creados hoy con su estado de sincronización.
  * Se actualiza cada vez que la pantalla recibe foco.
@@ -22,7 +22,7 @@ export default function LotesScreen() {
   const router = useRouter();
 
   const load = useCallback(async () => {
-    const data = await db.getBatchesForToday();
+    const data = await db.getAllBatches();
     setLotes(data);
   }, []);
 
@@ -45,10 +45,8 @@ export default function LotesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Lotes del Día</Text>
-          <Text style={styles.subtitle}>
-            {new Date().toLocaleDateString('es-AR', { dateStyle: 'long' })}
-          </Text>
+          <Text style={styles.title}>Historial de Lotes</Text>
+          <Text style={styles.subtitle}>Todos los registros en este dispositivo</Text>
         </View>
         <TouchableOpacity
           style={styles.newBtn}
@@ -76,7 +74,7 @@ export default function LotesScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No hay lotes registrados hoy.</Text>
+            <Text style={styles.emptyText}>No hay lotes registrados.</Text>
             <Text style={styles.emptyHint}>Tocá "+ Nuevo" para empezar.</Text>
           </View>
         }

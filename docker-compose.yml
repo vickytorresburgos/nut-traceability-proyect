@@ -1,14 +1,7 @@
-# docker-compose.yml
-# C5: red interna para aislamiento — DB y MinIO no se exponen al host.
-# Los puertos de Postgres y MinIO (9000) son accesibles solo dentro de la red "internal".
-# El único punto de entrada público es Nginx en el puerto 80.
-
 networks:
   internal:
-    # comunicación privada entre servicios
     driver: bridge
   public:
-    # solo Nginx se conecta aquí para recibir tráfico externo
     driver: bridge
 
 volumes:
@@ -22,18 +15,17 @@ services:
     container_name: nut-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-nut_notary}
-      POSTGRES_USER: ${POSTGRES_USER:-notary}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notary123}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - internal
-    # Expuesto solo a localhost para DBeaver
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-notary} -d ${POSTGRES_DB:-nut_notary}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 60s
       timeout: 5s
       retries: 5
@@ -44,14 +36,13 @@ services:
     container_name: nut-minio
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
     networks:
       - internal
-    # Consola MinIO accesible SOLO desde localhost (solo para desarrollo)
     ports:
       - "127.0.0.1:9001:9001"
     healthcheck:
@@ -76,7 +67,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 60s # tiempo para warmup de EasyOCR
+      start_period: 20s
 
   nut-api:
     build:
@@ -85,21 +76,29 @@ services:
       target: runtime
     container_name: nut-api
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - ./nut-api/.env
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
-      POSTGRES_DB: ${POSTGRES_DB:-nut_notary}
-      POSTGRES_USER: ${POSTGRES_USER:-notary}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notary123}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       MINIO_HOST: minio
       MINIO_PORT: "9000"
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-nut-images}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
       OCR_SERVICE_HOST: ocr-service
       OCR_SERVICE_PORT: "8081"
+      # Blockchain — Ganache corre en el host, accesible vía host-gateway
+      BLOCKCHAIN_ENABLED: ${BLOCKCHAIN_ENABLED:-false}
+      BLOCKCHAIN_RPC_URL: ${BLOCKCHAIN_RPC_URL:-http://host.docker.internal:8545}
+      BLOCKCHAIN_CHAIN_ID: ${BLOCKCHAIN_CHAIN_ID:-1337}
+      BLOCKCHAIN_CONTRACT_ADDRESS: ${BLOCKCHAIN_CONTRACT_ADDRESS:-}
+      BLOCKCHAIN_DEPLOYER_PRIVATE_KEY: ${BLOCKCHAIN_DEPLOYER_PRIVATE_KEY:-}
     networks:
       - internal
     depends_on:

@@ -24,19 +24,21 @@ router = APIRouter()
 OCR_BASE = f"http://{settings.OCR_SERVICE_HOST}:{settings.OCR_SERVICE_PORT}"
 OCR_TIMEOUT = 120.0  # segundos — debe ser < proxy_read_timeout de nginx (130s)
                      # El pipeline OCR puede tardar hasta ~90s (Tesseract cascada +
-                     # EasyOCR safe). Con 120s hay margen antes del corte de nginx.
+                     # Tesseract cascada). Con 120s hay margen antes del corte de nginx.
 
 
 async def _proxy_to_ocr(image: UploadFile, ocr_endpoint: str) -> dict:
     """Reenvía la imagen al OCR service y devuelve la respuesta JSON."""
     file_bytes = await image.read()
     files = {"image": (image.filename or "upload.jpg", file_bytes, image.content_type or "image/jpeg")}
+    headers = {"X-API-KEY": settings.API_KEY} if settings.API_KEY else {}
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{OCR_BASE}{ocr_endpoint}",
                 files=files,
+                headers=headers,
                 timeout=OCR_TIMEOUT,
             )
     except httpx.TimeoutException:

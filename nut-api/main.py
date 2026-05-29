@@ -8,6 +8,7 @@ from database import init_db, get_db
 from services import init_http_client, close_http_client, minio_client
 from core.config import settings
 from core.logging_config import configure_logging
+from core.security import validate_api_key
 from routers import batches
 from routers import ocr_proxy
 
@@ -23,7 +24,11 @@ async def lifespan(app: FastAPI):
     await close_http_client()  # C3: cierra el cliente limpiamente
 
 
-app = FastAPI(title="Nut Traceability API", version="1.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Nut Traceability API",
+    version="1.1.0",
+    lifespan=lifespan
+)
 
 
 @app.get("/health")
@@ -54,6 +59,6 @@ def health_check(db: Session = Depends(get_db)):
 
 
 app.include_router(batches.router, prefix="/api/v1/batches", tags=["batches"])
-app.include_router(ocr_proxy.router, prefix="/ocr", tags=["ocr-proxy"])
+app.include_router(ocr_proxy.router, prefix="/ocr", tags=["ocr-proxy"], dependencies=[Depends(validate_api_key)])
 
 app.mount("/dashboard", StaticFiles(directory="dashboard", html=True), name="dashboard")

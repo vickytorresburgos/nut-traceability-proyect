@@ -23,10 +23,9 @@
         <h1 class="text-lg font-bold text-white leading-tight">Nut Traceability</h1>
         <p class="text-xs text-emerald-400 font-medium">Certificado de Trazabilidad Digital</p>
       </div>
-      <div class="ml-auto flex items-center gap-2 bg-emerald-500/20 border border-emerald-500/30
-                  rounded-full px-3 py-1">
-        <div class="w-2 h-2 rounded-full bg-emerald-400 status-badge"></div>
-        <span class="text-xs font-semibold text-emerald-300">VERIFICADO</span>
+      <div id="verification-badge" class="ml-auto flex items-center gap-2 bg-slate-500/20 border border-slate-500/30 rounded-full px-3 py-1">
+        <div id="verification-dot" class="w-2 h-2 rounded-full bg-slate-400 status-badge"></div>
+        <span id="verification-text" class="text-xs font-semibold text-slate-300">CARGANDO...</span>
       </div>
     </div>
   </header>
@@ -36,11 +35,10 @@
     <!-- Trace ID Hero -->
     <section class="text-center py-6">
       <p class="text-slate-400 text-sm mb-1">Número de Traza</p>
-      <div id="trace-id"
-           class="text-5xl font-bold tracking-wider text-white mb-2">
-        {{trace_id}}
+      <div id="trace-id" class="text-5xl font-bold tracking-wider text-white mb-2">
+        ...
       </div>
-      <p id="batch-date" class="text-slate-400 text-sm">{{date}}</p>
+      <p id="batch-date" class="text-slate-400 text-sm">Cargando...</p>
     </section>
 
     <!-- Datos del Lote -->
@@ -52,27 +50,27 @@
       <div class="grid grid-cols-2 gap-4">
         <div class="bg-white/5 rounded-xl p-4">
           <p class="text-xs text-slate-500 mb-1">Finca de Origen</p>
-          <p id="farm-name" class="text-base font-semibold text-white">{{farm_name}}</p>
+          <p id="farm-name" class="text-base font-semibold text-white">...</p>
         </div>
         <div class="bg-white/5 rounded-xl p-4">
           <p class="text-xs text-slate-500 mb-1">Tipo de Cosecha</p>
-          <p id="harvest-type" class="text-base font-semibold text-white capitalize">{{harvest_type}}</p>
+          <p id="harvest-type" class="text-base font-semibold text-white capitalize">...</p>
         </div>
         <div class="bg-white/5 rounded-xl p-4">
           <p class="text-xs text-slate-500 mb-1">Humedad</p>
-          <p id="humidity" class="text-base font-semibold text-emerald-400">{{humidity}}</p>
+          <p id="humidity" class="text-base font-semibold text-emerald-400">...</p>
         </div>
         <div class="bg-white/5 rounded-xl p-4">
           <p class="text-xs text-slate-500 mb-1">Horno N°</p>
-          <p id="oven-id" class="text-base font-semibold text-white">{{oven_id}}</p>
+          <p id="oven-id" class="text-base font-semibold text-white">...</p>
         </div>
         <div class="bg-white/5 rounded-xl p-4">
           <p class="text-xs text-slate-500 mb-1">Calibre</p>
-          <p id="caliber" class="text-base font-semibold text-white">{{caliber}}</p>
+          <p id="caliber" class="text-base font-semibold text-white">...</p>
         </div>
         <div class="bg-white/5 rounded-xl p-4">
           <p class="text-xs text-slate-500 mb-1">Peso</p>
-          <p id="weight" class="text-base font-semibold text-white">{{weight}}</p>
+          <p id="weight" class="text-base font-semibold text-white">...</p>
         </div>
       </div>
     </section>
@@ -95,69 +93,68 @@
 
   <script>
 
-    // Poblar campos
-    document.getElementById('trace-id').textContent    = batch.trace_id;
-    document.getElementById('farm-name').textContent   = batch.farm_name;
-    document.getElementById('harvest-type').textContent= batch.harvest_type;
-    document.getElementById('humidity').textContent    = batch.humidity;
-    document.getElementById('hum-badge').textContent   = batch.humidity;
-    document.getElementById('oven-id').textContent     = batch.oven_id;
-    document.getElementById('caliber').textContent     = batch.caliber;
-    document.getElementById('weight').textContent      = batch.weight;
-    document.getElementById('hash-value').textContent  = batch.sha256_hash;
+    const urlParams = new URLSearchParams(window.location.search);
+    const traceId = urlParams.get('trace_id');
 
-    // Fecha legible
-    const dateEl = document.getElementById('batch-date');
-    try {
-      if (batch.remito_date) {
-        let rawDate = String(batch.remito_date).trim();
-        let dateStr = rawDate;
-        
-        // Regex para DD/MM/YYYY o DD-MM-YYYY o DD.MM.YYYY
-        const ddmmyyyy = /^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})$/;
-        const match = dateStr.match(ddmmyyyy);
-        
-        if (match) {
-          let [_, day, month, year] = match;
-          if (year.length === 2) year = '20' + year;
-          dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        }
-        
-        // Intentar parsear con hora para evitar saltos de día por TZ
-        let d = new Date(dateStr + 'T12:00:00');
-        if (isNaN(d.getTime())) {
-          // Reintentar parseo simple
-          d = new Date(dateStr);
-        }
-        
-        if (isNaN(d.getTime())) {
-          dateEl.textContent = 'Fecha inválida: ' + rawDate;
-        } else {
-          dateEl.textContent = d.toLocaleDateString('es-AR', {
+    if (!traceId) {
+      document.getElementById('trace-id').textContent = "ERROR";
+      document.getElementById('batch-date').textContent = "Falta parámetro ?trace_id=";
+    } else {
+      document.title = `Trazabilidad — Lote ${traceId}`;
+      document.getElementById('trace-id').textContent = traceId;
+
+      // Consultar datos del lote
+      fetch(`/api/v1/batches/by-trace/${traceId}`)
+        .then(res => {
+          if(!res.ok) throw new Error("No encontrado");
+          return res.json();
+        })
+        .then(batch => {
+          document.getElementById('farm-name').textContent   = batch.farm_name || 'N/A';
+          document.getElementById('harvest-type').textContent= batch.harvest_type || 'N/A';
+          document.getElementById('humidity').textContent    = batch.humidity ? `${batch.humidity}%` : 'N/A';
+          document.getElementById('hum-badge').textContent   = batch.humidity ? `${batch.humidity}%` : 'N/A';
+          document.getElementById('oven-id').textContent     = batch.oven_id || 'N/A';
+          document.getElementById('caliber').textContent     = batch.caliber || 'N/A';
+          document.getElementById('weight').textContent      = batch.weight ? `${batch.weight} kg` : 'N/A';
+
+          let d = new Date(batch.created_at || new Date());
+          document.getElementById('batch-date').textContent = d.toLocaleDateString('es-AR', {
             day: 'numeric', month: 'long', year: 'numeric'
           });
-        }
-      } else {
-        dateEl.textContent = 'Fecha no disponible';
-      }
-    } catch (e) {
-      console.error('Error parsing date:', e);
-      dateEl.textContent = 'Error al procesar fecha';
+        })
+        .catch(err => {
+          console.error(err);
+          document.getElementById('farm-name').textContent = "Lote no encontrado";
+        });
+
+      // Consultar verificación Blockchain
+      fetch(`/api/v1/batches/by-trace/${traceId}/verify`)
+        .then(res => res.json())
+        .then(data => {
+            const badgeContainer = document.getElementById('verification-badge');
+            const badgeText = document.getElementById('verification-text');
+            const badgeDot = document.getElementById('verification-dot');
+            
+            if (data.blockchain_verification && data.blockchain_verification.valid) {
+                // Todo OK
+                badgeContainer.className = "ml-auto flex items-center gap-2 bg-emerald-500/20 border border-emerald-500/30 rounded-full px-3 py-1";
+                badgeDot.className = "w-2 h-2 rounded-full bg-emerald-400 status-badge";
+                badgeText.className = "text-xs font-semibold text-emerald-300";
+                badgeText.textContent = "VERIFICADO ON-CHAIN";
+            } else {
+                // Pendiente o no válido
+                badgeContainer.className = "ml-auto flex items-center gap-2 bg-amber-500/20 border border-amber-500/30 rounded-full px-3 py-1";
+                badgeDot.className = "w-2 h-2 rounded-full bg-amber-400 status-badge";
+                badgeText.className = "text-xs font-semibold text-amber-300";
+                badgeText.textContent = "ANCLAJE PENDIENTE";
+            }
+        })
+        .catch(err => {
+            const badgeText = document.getElementById('verification-text');
+            badgeText.textContent = "ERROR BLOCKCHAIN";
+        });
     }
-
-    // QR Code
-    const qrUrl = `https://nut-traceability-um.com/batch/${batch.trace_id}`;
-    document.getElementById('qr-url').textContent = qrUrl;
-    document.title = `Trazabilidad — Lote ${batch.trace_id}`;
-
-    new QRCode(document.getElementById('qrcode'), {
-      text:          qrUrl,
-      width:         200,
-      height:        200,
-      colorDark:     '#0f172a',
-      colorLight:    '#ffffff',
-      correctLevel:  QRCode.CorrectLevel.H,
-    });
   </script>
 </body>
 </html>

@@ -25,7 +25,7 @@ export default function RootLayout() {
     return () => syncManager.stop();
   }, []);
 
-  if (!isDbReady) return null; // O mostrar SplashScreen
+  if (!isDbReady) return null; 
 
   return (
     <>

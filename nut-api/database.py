@@ -45,6 +45,12 @@ class NutBatch(Base):
     # Sellado
     sha256_hash = Column(String, nullable=True)
 
+    # Blockchain — distinción importante:
+    #   sha256_hash        → huella SHA-256 del CONTENIDO del lote (generada por Python)
+    #   blockchain_tx_hash → ID de la TRANSACCIÓN en la red Ethereum/Polygon
+    #                        (generado por la blockchain al confirmar el anclaje)
+    blockchain_tx_hash = Column(String, nullable=True)
+    blockchain_anchored_at = Column(DateTime, nullable=True)
     # I4: clave de idempotencia para evitar duplicados en reintentos del móvil
     idempotency_key = Column(String, unique=True, nullable=True, index=True)
 
@@ -57,6 +63,9 @@ def init_db():
         "ALTER TABLE nut_batches ADD COLUMN IF NOT EXISTS remito_date VARCHAR;",
         # I4: columna para idempotencia — safe en re-ejecuciones
         "ALTER TABLE nut_batches ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR UNIQUE;",
+        # Blockchain: ID de la tx on-chain (distinto del sha256_hash del lote)
+        "ALTER TABLE nut_batches ADD COLUMN IF NOT EXISTS blockchain_tx_hash VARCHAR;",
+        "ALTER TABLE nut_batches ADD COLUMN IF NOT EXISTS blockchain_anchored_at TIMESTAMP;",
     ]
     with engine.connect() as conn:
         for stmt in migrations:
