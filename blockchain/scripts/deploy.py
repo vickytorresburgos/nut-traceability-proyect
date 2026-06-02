@@ -23,21 +23,41 @@ from pathlib import Path
 
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
+from dotenv import load_dotenv
+
+# Cargar variables desde el .env de la raíz
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 RPC_URL = os.environ.get("BLOCKCHAIN_RPC_URL")
 PRIVATE_KEY = os.environ.get("BLOCKCHAIN_DEPLOYER_PRIVATE_KEY")
 
 if not RPC_URL or not PRIVATE_KEY:
-    print("ERROR: Definir BLOCKCHAIN_RPC_URL y BLOCKCHAIN_DEPLOYER_PRIVATE_KEY")
+    print(f"ERROR: Variables no encontradas. RPC_URL: {RPC_URL}, KEY: {'SET' if PRIVATE_KEY else 'MISSING'}")
     sys.exit(1)
+
+# Limpiar espacios en blanco
+RPC_URL = RPC_URL.strip()
+PRIVATE_KEY = PRIVATE_KEY.strip()
+
+# Normalizar hosts para evitar problemas de resolución entre Docker y Host
+if "localhost" in RPC_URL:
+    RPC_URL = RPC_URL.replace("localhost", "127.0.0.1")
+elif "host.docker.internal" in RPC_URL:
+    RPC_URL = RPC_URL.replace("host.docker.internal", "127.0.0.1")
+elif "besu-node-1" in RPC_URL:
+    RPC_URL = RPC_URL.replace("besu-node-1", "127.0.0.1")
 
 # ── Conexión ──────────────────────────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
-if not w3.is_connected():
-    print(f"ERROR: No se puede conectar a {RPC_URL}")
+try:
+    block_number = w3.eth.block_number
+    print(f"Conectado a la red. Bloque actual: {block_number}")
+except Exception as e:
+    print(f"ERROR: No se puede conectar a {RPC_URL}. Detalle: {e}")
     sys.exit(1)
 
 account = w3.eth.account.from_key(PRIVATE_KEY)
@@ -60,11 +80,17 @@ bytecode = artifact["bytecode"]
 # ── Deploy ────────────────────────────────────────────────────────────────────
 Contract = w3.eth.contract(abi=abi, bytecode=bytecode)
 
+gas_price = w3.eth.gas_price
+if gas_price == 0:
+    gas_price = w3.to_wei(1, 'gwei')
+
+print(f"Gas Price: {w3.from_wei(gas_price, 'gwei')} Gwei")
+
 tx = Contract.constructor().build_transaction({
     "from": account.address,
     "nonce": w3.eth.get_transaction_count(account.address),
-    "gas": 600_000,
-    "gasPrice": w3.eth.gas_price,
+    "gas": 1_000_000, # aumentado un poco por seguridad
+    "gasPrice": gas_price,
 })
 
 signed = account.sign_transaction(tx)

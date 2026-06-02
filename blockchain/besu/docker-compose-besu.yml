@@ -1,0 +1,72 @@
+services:
+  besu-node-1:
+    image: hyperledger/besu:24.3
+    container_name: besu-node-1
+    hostname: besu-node-1
+    user: root
+    extra_hosts:
+      - "besu-node-1:127.0.0.1"
+    networks:
+      besu-net:
+        ipv4_address: 172.16.239.11
+    volumes:
+      - ./genesis.json:/etc/besu/genesis.json
+      - ./node1/key:/etc/besu/key
+    command:
+      - --data-path=/opt/besu/data
+      - --genesis-file=/etc/besu/genesis.json
+      - --node-private-key-file=/etc/besu/key
+      - --rpc-http-enabled
+      - --rpc-http-host=0.0.0.0
+      - --rpc-http-port=8545
+      - --rpc-http-cors-origins=*
+      - --rpc-http-api=ETH,NET,CLIQUE,DEBUG,MINER
+      - --host-allowlist=*
+      - --p2p-enabled=true
+      - --p2p-host=172.16.239.11
+      - --p2p-port=30303
+      - --min-gas-price=0
+    ports:
+      - "8545:8545"
+      - "30303:30303"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8545' 2>/dev/null && echo ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
+
+  besu-node-2:
+    image: hyperledger/besu:24.3
+    container_name: besu-node-2
+    hostname: besu-node-2
+    user: root
+    extra_hosts:
+      - "besu-node-2:127.0.0.1"
+    networks:
+      besu-net:
+        ipv4_address: 172.16.239.12
+    volumes:
+      - ./genesis.json:/etc/besu/genesis.json
+      - ./node2/key:/etc/besu/key
+    depends_on:
+      - besu-node-1
+    command:
+      - --data-path=/opt/besu/data
+      - --genesis-file=/etc/besu/genesis.json
+      - --node-private-key-file=/etc/besu/key
+      - --p2p-enabled=true
+      - --p2p-host=172.16.239.12
+      - --p2p-port=30303
+      - --bootnodes=enode://29c9942e1249451dd70213a6803efe706d680e3f175ed68c2a95bc736284c9a2189a63e568d944bc4d937b81ec8d6e0b58c9f65a7744fb88c8a229f2ef34ab73@172.16.239.11:30303
+      - --min-gas-price=0
+    ports:
+      - "30304:30303"
+
+networks:
+  besu-net:
+    name: besu-net # Forzamos el nombre exacto
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.239.0/24

@@ -81,34 +81,58 @@ class BlockchainService:
                 "o deshabilitar con BLOCKCHAIN_ENABLED=false."
             )
 
-        rpc_url = os.environ.get("BLOCKCHAIN_RPC_URL")
-        if not rpc_url:
-            raise ValueError("BLOCKCHAIN_RPC_URL no definido en las variables de entorno.")
+        rpc_url = os.environ.get("BLOCKCHAIN_RPC_URL", "http://besu-node-1:8545")
+
+        # Auto-corrección para entornos Docker:
+        # Si estamos en Docker, preferimos conectarnos directamente al nombre del servicio 'besu-node-1'
+        if os.path.exists("/.dockerenv"):
+            if "localhost" in rpc_url or "127.0.0.1" in rpc_url or "host.docker.internal" in rpc_url:
+                rpc_url = "http://besu-node-1:8545"
 
         self._Web3 = Web3
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        # Configurar timeout explícito de 10s — necesario en web3 v7
+        # ya que el timeout por defecto de HTTPProvider es muy corto.
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
 
         # Middleware necesario para redes PoA: Ganache y Polygon
         self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
-        if not self.w3.is_connected():
-            raise RuntimeError(
-                f"No se puede conectar a la blockchain en {rpc_url}. "
-                "Verificar que Ganache/nodo esté corriendo."
+        # Verificar conectividad con eth_chain_id en lugar de is_connected().
+        # En web3.py v7, is_connected() usa un timeout de ~1s que puede fallar
+        # aunque el nodo responda correctamente (race condition al arrancar).
+        try:
+            detected_chain_id = self.w3.eth.chain_id
+            logger.info(f"[Blockchain] Conectado a {rpc_url} | chain_id={detected_chain_id}")
+        except Exception as conn_err:
+            # Tolerante a fallos: si la blockchain no responde, la API continúa.
+            logger.warning(
+                f"[Blockchain] No se puede conectar a {rpc_url}: {conn_err}. "
+                "El servicio blockchain queda deshabilitado. "
+                "La API funciona con normalidad sin anclaje blockchain."
             )
+            self.enabled = False
+            return
 
         private_key = os.environ.get("BLOCKCHAIN_DEPLOYER_PRIVATE_KEY")
         if not private_key:
-            raise ValueError("BLOCKCHAIN_DEPLOYER_PRIVATE_KEY no definido.")
+            logger.warning(
+                "[Blockchain] BLOCKCHAIN_DEPLOYER_PRIVATE_KEY no definido. "
+                "El servicio blockchain queda deshabilitado."
+            )
+            self.enabled = False
+            return
 
         self.account = self.w3.eth.account.from_key(private_key)
 
         contract_address = os.environ.get("BLOCKCHAIN_CONTRACT_ADDRESS")
         if not contract_address:
-            raise ValueError(
-                "BLOCKCHAIN_CONTRACT_ADDRESS no definido. "
-                "Ejecutar blockchain/scripts/deploy.py primero."
+            logger.warning(
+                "[Blockchain] BLOCKCHAIN_CONTRACT_ADDRESS no definido. "
+                "Ejecutar blockchain/scripts/deploy.py primero. "
+                "El servicio blockchain queda deshabilitado."
             )
+            self.enabled = False
+            return
 
         abi = _load_abi()
         self.contract = self.w3.eth.contract(
@@ -174,7 +198,10 @@ class BlockchainService:
                 "from": self.account.address,
                 "nonce": nonce,
                 "gas": 100_000,
-                "gasPrice": self.w3.eth.gas_price,
+                # Besu 24.3 rechaza gasPrice=0 con error -32009 aunque --min-gas-price=0.
+                # El mínimo efectivo es ~1000 wei. Usamos 1 Gwei como fallback seguro
+                # para redes de desarrollo permisionadas sin costo real.
+                "gasPrice": max(self.w3.eth.gas_price, 1_000_000_000),
             })
 
             signed = self.account.sign_transaction(tx)
