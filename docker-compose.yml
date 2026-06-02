@@ -3,6 +3,8 @@ networks:
     driver: bridge
   public:
     driver: bridge
+  besu-net:
+    external: true
 
 volumes:
   postgres_data:
@@ -61,7 +63,6 @@ services:
     restart: unless-stopped
     networks:
       - internal
-    # Sin "ports": el OCR no se expone, solo nut-api lo llama internamente
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8081/ocr/health" ]
       interval: 60s
@@ -76,8 +77,6 @@ services:
       target: runtime
     container_name: nut-api
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     env_file:
       - ./nut-api/.env
     environment:
@@ -93,14 +92,14 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET}
       OCR_SERVICE_HOST: ocr-service
       OCR_SERVICE_PORT: "8081"
-      # Blockchain — Ganache corre en el host, accesible vía host-gateway
       BLOCKCHAIN_ENABLED: ${BLOCKCHAIN_ENABLED:-false}
-      BLOCKCHAIN_RPC_URL: ${BLOCKCHAIN_RPC_URL:-http://host.docker.internal:8545}
+      BLOCKCHAIN_RPC_URL: ${BLOCKCHAIN_RPC_URL:-http://besu-node-1:8545}
       BLOCKCHAIN_CHAIN_ID: ${BLOCKCHAIN_CHAIN_ID:-1337}
       BLOCKCHAIN_CONTRACT_ADDRESS: ${BLOCKCHAIN_CONTRACT_ADDRESS:-}
       BLOCKCHAIN_DEPLOYER_PRIVATE_KEY: ${BLOCKCHAIN_DEPLOYER_PRIVATE_KEY:-}
     networks:
       - internal
+      - besu-net
     depends_on:
       postgres:
         condition: service_healthy
