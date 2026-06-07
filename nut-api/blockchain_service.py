@@ -82,8 +82,8 @@ class BlockchainService:
             )
 
         rpc_url = os.environ.get("BLOCKCHAIN_RPC_URL", "http://besu-node-1:8545")
-
-        # Auto-corrección para entornos Docker:
+        
+        # Auto-corrección para entornos Docker: 
         # Si estamos en Docker, preferimos conectarnos directamente al nombre del servicio 'besu-node-1'
         if os.path.exists("/.dockerenv"):
             if "localhost" in rpc_url or "127.0.0.1" in rpc_url or "host.docker.internal" in rpc_url:
@@ -115,24 +115,16 @@ class BlockchainService:
 
         private_key = os.environ.get("BLOCKCHAIN_DEPLOYER_PRIVATE_KEY")
         if not private_key:
-            logger.warning(
-                "[Blockchain] BLOCKCHAIN_DEPLOYER_PRIVATE_KEY no definido. "
-                "El servicio blockchain queda deshabilitado."
-            )
-            self.enabled = False
-            return
+            raise ValueError("BLOCKCHAIN_DEPLOYER_PRIVATE_KEY no definido.")
 
         self.account = self.w3.eth.account.from_key(private_key)
 
         contract_address = os.environ.get("BLOCKCHAIN_CONTRACT_ADDRESS")
         if not contract_address:
-            logger.warning(
-                "[Blockchain] BLOCKCHAIN_CONTRACT_ADDRESS no definido. "
-                "Ejecutar blockchain/scripts/deploy.py primero. "
-                "El servicio blockchain queda deshabilitado."
+            raise ValueError(
+                "BLOCKCHAIN_CONTRACT_ADDRESS no definido. "
+                "Ejecutar blockchain/scripts/deploy.py primero."
             )
-            self.enabled = False
-            return
 
         abi = _load_abi()
         self.contract = self.w3.eth.contract(
@@ -192,17 +184,33 @@ class BlockchainService:
             hash_bytes = self._sha256_hex_to_bytes32(sha256_hash)
             nonce = self.w3.eth.get_transaction_count(self.account.address)
 
+            # Soporte para EIP-1559 (redes públicas)
+            try:
+                max_priority_fee = self.w3.eth.max_priority_fee
+                base_fee = self.w3.eth.get_block('latest')['baseFeePerGas']
+                max_fee = base_fee * 2 + max_priority_fee
+                
+                tx_params = {
+                    "from": self.account.address,
+                    "nonce": nonce,
+                    "gas": 150_000,
+                    "maxFeePerGas": max_fee,
+                    "maxPriorityFeePerGas": max_priority_fee,
+                    "chainId": self.w3.eth.chain_id,
+                }
+            except Exception:
+                logger.warning("[Blockchain] No se pudo obtener gas EIP-1559, usando fallback legacy.")
+                tx_params = {
+                    "from": self.account.address,
+                    "nonce": nonce,
+                    "gas": 150_000,
+                    "gasPrice": max(self.w3.eth.gas_price, 1_000_000_000),
+                    "chainId": self.w3.eth.chain_id,
+                }
+
             tx = self.contract.functions.anchorHash(
                 trace_number, hash_bytes
-            ).build_transaction({
-                "from": self.account.address,
-                "nonce": nonce,
-                "gas": 100_000,
-                # Besu 24.3 rechaza gasPrice=0 con error -32009 aunque --min-gas-price=0.
-                # El mínimo efectivo es ~1000 wei. Usamos 1 Gwei como fallback seguro
-                # para redes de desarrollo permisionadas sin costo real.
-                "gasPrice": max(self.w3.eth.gas_price, 1_000_000_000),
-            })
+            ).build_transaction(tx_params)
 
             signed = self.account.sign_transaction(tx)
             raw_tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -264,6 +272,14 @@ class BlockchainService:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 _blockchain_service: Optional[BlockchainService] = None
+
+
+def get_blockchain_service() -> BlockchainService:
+    """Retorna el singleton de BlockchainService. Thread-safe para FastAPI."""
+    global _blockchain_service
+    if _blockchain_service is None:
+        _blockchain_service = BlockchainService()
+    return _blockchain_service
 
 
 def get_blockchain_service() -> BlockchainService:

@@ -80,18 +80,39 @@ bytecode = artifact["bytecode"]
 # ── Deploy ────────────────────────────────────────────────────────────────────
 Contract = w3.eth.contract(abi=abi, bytecode=bytecode)
 
-gas_price = w3.eth.gas_price
-if gas_price == 0:
-    gas_price = w3.to_wei(1, 'gwei')
+# Soporte para EIP-1559 (redes públicas como Polygon Amoy)
+try:
+    max_priority_fee = w3.eth.max_priority_fee
+    base_fee = w3.eth.get_block('latest')['baseFeePerGas']
+    max_fee = base_fee * 2 + max_priority_fee
+    
+    print(f"Gas Dinámico (EIP-1559):")
+    print(f"   Max Priority Fee: {w3.from_wei(max_priority_fee, 'gwei')} Gwei")
+    print(f"   Max Fee: {w3.from_wei(max_fee, 'gwei')} Gwei")
+    
+    tx_params = {
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 700_000,
+        "maxFeePerGas": max_fee,
+        "maxPriorityFeePerGas": max_priority_fee,
+        "chainId": w3.eth.chain_id
+    }
+except Exception as e:
+    print(f"Advertencia: No se pudo obtener gas EIP-1559 ({e}). Usando fallback legacy.")
+    gas_price = w3.eth.gas_price
+    if gas_price == 0:
+        gas_price = w3.to_wei(1, 'gwei')
+    tx_params = {
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 1_500_000,
+        "gasPrice": gas_price,
+        "chainId": w3.eth.chain_id
+    }
 
-print(f"Gas Price: {w3.from_wei(gas_price, 'gwei')} Gwei")
-
-tx = Contract.constructor().build_transaction({
-    "from": account.address,
-    "nonce": w3.eth.get_transaction_count(account.address),
-    "gas": 1_000_000, # aumentado un poco por seguridad
-    "gasPrice": gas_price,
-})
+print(f"Enviando transacción de despliegue...")
+tx = Contract.constructor().build_transaction(tx_params)
 
 signed = account.sign_transaction(tx)
 tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)

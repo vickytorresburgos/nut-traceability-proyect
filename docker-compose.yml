@@ -3,8 +3,6 @@ networks:
     driver: bridge
   public:
     driver: bridge
-  besu-net:
-    external: true
 
 volumes:
   postgres_data:
@@ -99,7 +97,6 @@ services:
       BLOCKCHAIN_DEPLOYER_PRIVATE_KEY: ${BLOCKCHAIN_DEPLOYER_PRIVATE_KEY:-}
     networks:
       - internal
-      - besu-net
     depends_on:
       postgres:
         condition: service_healthy
