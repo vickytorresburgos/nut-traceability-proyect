@@ -8,9 +8,10 @@ from database import init_db, get_db
 from services import init_http_client, close_http_client, minio_client
 from core.config import settings
 from core.logging_config import configure_logging
-from core.security import validate_api_key
+from core.security import get_current_user
 from routers import batches
 from routers import ocr_proxy
+from routers import auth
 
 
 @asynccontextmanager
@@ -58,7 +59,8 @@ def health_check(db: Session = Depends(get_db)):
     return status
 
 
+app.include_router(auth.router, prefix="/api/v1/auth")
 app.include_router(batches.router, prefix="/api/v1/batches", tags=["batches"])
-app.include_router(ocr_proxy.router, prefix="/ocr", tags=["ocr-proxy"], dependencies=[Depends(validate_api_key)])
+app.include_router(ocr_proxy.router, prefix="/ocr", tags=["ocr-proxy"], dependencies=[Depends(get_current_user)])
 
 app.mount("/dashboard", StaticFiles(directory="dashboard", html=True), name="dashboard")

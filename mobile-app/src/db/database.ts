@@ -21,7 +21,7 @@ class Database {
 
   // ── nut_batches Operations ──────────────────────────────────────────────
 
-  async createBatch(data: Pick<NutBatch, 'trace_number' | 'farm_name' | 'harvest_type' | 'remito_date'>): Promise<NutBatch> {
+  async createBatch(data: Pick<NutBatch, 'trace_number' | 'farm_name' | 'harvest_type' | 'remito_date' | 'operator_id'>): Promise<NutBatch> {
     const batch: NutBatch = {
       id: uuidv4(),
       ...data,
@@ -38,13 +38,13 @@ class Database {
       `INSERT INTO nut_batches
          (id, trace_number, server_id, status, farm_name, harvest_type,
           remito_date, remito_image_url, oven_id, humidity, oven_image_url,
-          caliber, weight, caliber_image_url, sha256_hash, created_at, synced_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          caliber, weight, caliber_image_url, sha256_hash, operator_id, created_at, synced_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [batch.id, batch.trace_number, batch.server_id, batch.status,
        batch.farm_name, batch.harvest_type, batch.remito_date, batch.remito_image_url,
        batch.oven_id, batch.humidity, batch.oven_image_url,
        batch.caliber, batch.weight, batch.caliber_image_url,
-       batch.sha256_hash, batch.created_at, batch.synced_at]
+       batch.sha256_hash, batch.operator_id, batch.created_at, batch.synced_at]
     );
     return batch;
   }
@@ -58,6 +58,16 @@ class Database {
   async getAllBatches(): Promise<NutBatch[]> {
     return this.conn.getAllAsync<NutBatch>(
       'SELECT * FROM nut_batches ORDER BY created_at DESC'
+    );
+  }
+
+  async getBatchesForUser(username: string): Promise<NutBatch[]> {
+    if (username === 'admin') {
+      return this.getAllBatches();
+    }
+    return this.conn.getAllAsync<NutBatch>(
+      'SELECT * FROM nut_batches WHERE operator_id = ? ORDER BY created_at DESC',
+      [username]
     );
   }
 

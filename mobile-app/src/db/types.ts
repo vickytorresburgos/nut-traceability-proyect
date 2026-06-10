@@ -14,6 +14,7 @@ export interface NutBatch {
   weight: string | null;
   caliber_image_url: string | null;
   sha256_hash: string | null;
+  operator_id: string | null;
   created_at: string;
   synced_at: string | null;
 }

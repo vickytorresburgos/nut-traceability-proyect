@@ -15,7 +15,8 @@
  */
 
 import { optimizeImage } from './imageService';
-import { API_URL as API_BASE, API_KEY } from './config';
+import { API_URL as API_BASE } from './config';
+import * as SecureStore from 'expo-secure-store';
 
 // ── Tipos de respuesta del OCR ─────────────────────────────────────────────
 
@@ -96,11 +97,12 @@ async function postImageToApi(endpoint: string, imageUri: string, imageName: str
 
       console.log(`[ocrApi] Llamando a: ${url}`);
 
+      const token = await SecureStore.getItemAsync('userToken');
       const headers: Record<string, string> = {
         'bypass-tunnel-reminder': '1',
       };
-      if (API_KEY) {
-        headers['X-API-KEY'] = API_KEY;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
 
       const response = await fetchWithTimeout(url, {
@@ -108,6 +110,11 @@ async function postImageToApi(endpoint: string, imageUri: string, imageName: str
         body: form,
         headers: headers,
       }, OCR_TIMEOUT_MS);
+
+      if (response.status === 401) {
+        await SecureStore.deleteItemAsync('userToken');
+        throw new Error('Sesión expirada. Por favor inicie sesión de nuevo.');
+      }
 
       let body: any;
       try {

@@ -190,20 +190,26 @@ class BlockchainService:
                 base_fee = self.w3.eth.get_block('latest')['baseFeePerGas']
                 max_fee = base_fee * 2 + max_priority_fee
                 
+                # Estimar el gas exacto necesario y añadir 10% de margen
+                estimated_gas = self.contract.functions.anchorHash(
+                    trace_number, hash_bytes
+                ).estimate_gas({"from": self.account.address})
+                gas_limit = int(estimated_gas * 1.1)
+
                 tx_params = {
                     "from": self.account.address,
                     "nonce": nonce,
-                    "gas": 150_000,
+                    "gas": gas_limit,
                     "maxFeePerGas": max_fee,
                     "maxPriorityFeePerGas": max_priority_fee,
                     "chainId": self.w3.eth.chain_id,
                 }
-            except Exception:
-                logger.warning("[Blockchain] No se pudo obtener gas EIP-1559, usando fallback legacy.")
+            except Exception as e:
+                logger.warning(f"[Blockchain] Error EIP-1559 o estimación de gas ({e}). Usando fallback legacy.")
                 tx_params = {
                     "from": self.account.address,
                     "nonce": nonce,
-                    "gas": 150_000,
+                    "gas": 150_000, # Fallback seguro
                     "gasPrice": max(self.w3.eth.gas_price, 1_000_000_000),
                     "chainId": self.w3.eth.chain_id,
                 }
