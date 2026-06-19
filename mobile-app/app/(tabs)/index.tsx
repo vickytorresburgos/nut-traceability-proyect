@@ -14,7 +14,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { db, NutBatch } from '../../src/db/database';
 import { useAuth } from '../../src/context/AuthContext';
 import { syncManager } from '../../src/services/syncManager';
-import { SyncStatusBadge } from '../../src/components/SyncStatusBadge';
 import { BatchCard } from '../../src/components/BatchCard';
 
 export default function LotesScreen() {
@@ -47,13 +46,8 @@ export default function LotesScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={styles.title}>Historial de Lotes</Text>
-            <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
-              <Text style={styles.logoutText}>Salir</Text>
-            </TouchableOpacity>
-          </View>
+        <View>
+          <Text style={styles.title}>Historial de Lotes</Text>
           <Text style={styles.subtitle}>Operario: {username}</Text>
         </View>
         <TouchableOpacity
@@ -99,6 +93,12 @@ export default function LotesScreen() {
           />
         )}
       />
+
+      <View style={styles.footer}>
+        <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
+          <Text style={styles.logoutText}>Salir</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -117,9 +117,9 @@ const styles = StyleSheet.create({
   },
   newBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   logoutBtn: {
-    backgroundColor: '#334155', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+    backgroundColor: '#334155', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
   },
-  logoutText: { color: '#94a3b8', fontSize: 11, fontWeight: '600' },
+  logoutText: { color: '#94a3b8', fontSize: 14, fontWeight: '600' },
   syncBanner: {
     backgroundColor: '#422006', borderLeftWidth: 3, borderLeftColor: '#f59e0b',
     paddingHorizontal: 20, paddingVertical: 12,
@@ -129,4 +129,11 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { color: '#94a3b8', fontSize: 16, fontWeight: '500' },
   emptyHint: { color: '#475569', fontSize: 13, marginTop: 6 },
+  footer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    backgroundColor: '#0f172a'
+  }
 });
