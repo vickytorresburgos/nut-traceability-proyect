@@ -11,11 +11,13 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } fr
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter, useGlobalSearchParams } from 'expo-router';
 import { db } from '../../src/db/database';
+import { useAuth } from '../../src/context/AuthContext';
 
 export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const router = useRouter();
+  const { username } = useAuth();
 
   const params = useGlobalSearchParams<{ type?: 'remito' | 'oven' | 'caliber', batchId?: string }>();
   
@@ -72,6 +74,7 @@ export default function CameraScreen() {
           farm_name: '',
           harvest_type: '',
           remito_date: new Date().toISOString().slice(0, 10),
+          operator_id: username,
         });
         batchId = batch.id;
       } else {

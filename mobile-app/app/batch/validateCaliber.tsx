@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, Image, StyleSheet,
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { db, NutBatch, Captura } from '../../src/db/database';
 import { runCaliberOcr } from '../../src/services/ocrApi';
+import { syncManager } from '../../src/services/syncManager';
 
 export default function ValidateCaliberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -67,9 +68,14 @@ export default function ValidateCaliberScreen() {
       });
 
       await db.enqueue(batch.id, 'COMPLETE_BATCH', {});
+      
+      // Intentar sincronizar inmediatamente
+      syncManager.sync();
+
       router.replace({ 
         pathname: '/batch/results', 
         params: { 
+          id: batch.id,
           trace_number: batch.trace_number ?? 'Sincronizando...' 
         } 
       });

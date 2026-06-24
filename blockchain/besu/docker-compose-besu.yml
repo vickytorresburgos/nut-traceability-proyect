@@ -62,6 +62,8 @@ services:
       - --min-gas-price=0
     ports:
       - "30304:30303"
+    healthcheck:
+      disable: true
 
 networks:
   besu-net:

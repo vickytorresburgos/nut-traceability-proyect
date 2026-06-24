@@ -23,6 +23,7 @@ def create_batch(
     remito_date: str,
     remito_image_url: str,
     status: str,
+    operator_id: int | None = None,
 ) -> NutBatch:
     new_batch = NutBatch(
         farm_name=farm_name,
@@ -30,6 +31,7 @@ def create_batch(
         remito_date=remito_date,
         remito_image_url=remito_image_url,
         status=status,
+        operator_id=operator_id,
     )
     db.add(new_batch)
     db.commit()
@@ -160,6 +162,7 @@ def create_complete_batch(
     caliber_image_url: str,
     status: str,
     idempotency_key: Optional[str] = None,  # I4
+    operator_id: int | None = None,
 ) -> NutBatch:
     import json
     from services import calculate_sha256
@@ -177,6 +180,7 @@ def create_complete_batch(
         caliber_image_url=caliber_image_url,
         status=status,
         idempotency_key=idempotency_key,  # I4
+        operator_id=operator_id,
     )
     db.add(new_batch)
     db.flush()  # obtiene el ID sin hacer commit

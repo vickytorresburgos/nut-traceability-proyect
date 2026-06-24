@@ -16,12 +16,12 @@ from crud import (
 )
 from services import upload_image_to_storage, extract_data_with_ocr, calculate_sha256
 from core.constants import HARVEST_TYPES, STATUS_PENDING, STATUS_COMPLETED
-from core.security import validate_api_key
+from core.security import get_current_user, User
 from blockchain_service import get_blockchain_service
 
 router = APIRouter()
 
-@router.post("", dependencies=[Depends(validate_api_key)])
+@router.post("")
 async def create_batch_remito(
     remito_image: UploadFile = File(...),
     # Datos OCR pre-extraidos (opcionales):
@@ -31,6 +31,7 @@ async def create_batch_remito(
     harvest_type: str | None = Form(None),
     remito_date: str | None = Form(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     file_bytes = await remito_image.read()
     content_type = remito_image.content_type or "image/jpeg"
@@ -62,6 +63,7 @@ async def create_batch_remito(
         remito_date=remito_date,
         remito_image_url=image_url,
         status=STATUS_PENDING,
+        operator_id=current_user.id,
     )
 
     return {
@@ -76,7 +78,7 @@ async def create_batch_remito(
     }
 
 
-@router.post("/{batch_id}/oven", dependencies=[Depends(validate_api_key)])
+@router.post("/{batch_id}/oven")
 async def update_batch_oven_endpoint(
     batch_id: int,
     oven_image: UploadFile = File(...),
@@ -84,6 +86,7 @@ async def update_batch_oven_endpoint(
     oven_id: str | None = Form(None),
     humidity: str | None = Form(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     batch = get_batch(db, batch_id)
     if not batch:
@@ -128,7 +131,7 @@ async def update_batch_oven_endpoint(
 
 
 
-@router.post("/{batch_id}/caliber", dependencies=[Depends(validate_api_key)])
+@router.post("/{batch_id}/caliber")
 async def update_batch_caliber_endpoint(
     batch_id: int,
     caliber_image: UploadFile = File(...),
@@ -136,6 +139,7 @@ async def update_batch_caliber_endpoint(
     caliber: str | None = Form(None),
     weight: str | None = Form(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Fase 3: procesa la imagen del calibre con OCR y guarda los datos.
@@ -177,11 +181,12 @@ async def update_batch_caliber_endpoint(
     }
 
 
-@router.post("/{batch_id}/complete", dependencies=[Depends(validate_api_key)])
+@router.post("/{batch_id}/complete")
 async def complete_batch_endpoint(
     batch_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Paso final del flujo step-by-step.
@@ -306,6 +311,7 @@ async def get_batch_by_trace(
         "caliber": batch.caliber,
         "weight": batch.weight,
         "sha256_hash": batch.sha256_hash,
+        "blockchain_tx_hash": batch.blockchain_tx_hash,
         "status": batch.status,
         "images": {
             "remito": batch.remito_image_url,

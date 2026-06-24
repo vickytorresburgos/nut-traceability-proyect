@@ -7,39 +7,75 @@ import { Platform } from 'react-native';
 import { API_URL, DASHBOARD_URL } from '../../src/services/config';
 
 export default function ResultsScreen() {
-  const { trace_number } = useLocalSearchParams<{ trace_number: string }>();
+  const { id, trace_number: initialTraceNumber } = useLocalSearchParams<{ id: string, trace_number: string }>();
   const router = useRouter();
   
   const [batch, setBatch] = useState<NutBatch | null>(null);
+  const [traceNumber, setTraceNumber] = useState(initialTraceNumber);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      const batches = await db.getBatchesForToday();
-      const b = batches.find(b => b.trace_number === trace_number);
-      try {
-        const response = await fetch(`${API_URL}/api/v1/batches/by-trace/${trace_number}`);
-        if (response.ok) {
-          const data = await response.json();
-          setBatch(data);
-        }
-      } catch (e) {
-        console.error(e);
-      }
+    let isMounted = true;
+    let interval: any;
+
+    const checkStatus = async () => {
+      // 1. Intentar obtener el lote local para ver si ya se sincronizó el trace_number
+      const localBatch = await db.getBatchById(id);
       
-      setLoading(false);
-    })();
-  }, [trace_number]);
+      if (localBatch && localBatch.trace_number && localBatch.trace_number !== 'Sincronizando...') {
+        if (!isMounted) return;
+        setTraceNumber(localBatch.trace_number);
+        
+        // 2. Si ya tenemos el número de traza, intentar obtener datos completos del servidor (hash, etc)
+        try {
+          const response = await fetch(`${API_URL}/api/v1/batches/by-trace/${localBatch.trace_number}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (isMounted) {
+              setBatch(data);
+              setLoading(false);
+              if (interval) clearInterval(interval);
+            }
+          } else {
+            // Si el servidor aún no responde (propaga cambios), mostramos lo local al menos
+            if (isMounted) {
+              setBatch(localBatch);
+              setLoading(false);
+            }
+          }
+        } catch (e) {
+          console.error('[Results] Error fetch API:', e);
+          if (isMounted) {
+            setBatch(localBatch);
+            setLoading(false);
+          }
+        }
+      } else {
+        // Seguimos esperando sincronización local
+        if (isMounted && !interval) {
+          interval = setInterval(checkStatus, 2000);
+        }
+      }
+    };
+
+    checkStatus();
+
+    return () => {
+      isMounted = false;
+      if (interval) clearInterval(interval);
+    };
+  }, [id]);
 
   if (loading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color="#34d399" size="large" />
+        <Text style={{ color: '#34d399', marginTop: 16, fontWeight: '600' }}>Sincronizando con Blockchain...</Text>
       </View>
     );
   }
 
-  const qrUrl = `${DASHBOARD_URL}/?trace_id=${trace_number}`;
+  const qrUrl = `${DASHBOARD_URL}/?trace_id=${traceNumber}`;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -49,7 +85,7 @@ export default function ResultsScreen() {
 
       <View style={styles.card}>
         <Text style={styles.label}>NÚMERO DE TRAZA</Text>
-        <Text style={styles.valueLarge}>{trace_number}</Text>
+        <Text style={styles.valueLarge}>{traceNumber}</Text>
       </View>
 
       {batch && (

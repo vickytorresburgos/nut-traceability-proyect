@@ -12,19 +12,21 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { db, NutBatch } from '../../src/db/database';
+import { useAuth } from '../../src/context/AuthContext';
 import { syncManager } from '../../src/services/syncManager';
-import { SyncStatusBadge } from '../../src/components/SyncStatusBadge';
 import { BatchCard } from '../../src/components/BatchCard';
 
 export default function LotesScreen() {
   const [lotes, setLotes] = useState<NutBatch[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
+  const { username, logout } = useAuth();
 
   const load = useCallback(async () => {
-    const data = await db.getAllBatches();
+    if (!username) return;
+    const data = await db.getBatchesForUser(username);
     setLotes(data);
-  }, []);
+  }, [username]);
 
   // Recargar al volver a esta pantalla
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -46,7 +48,7 @@ export default function LotesScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Historial de Lotes</Text>
-          <Text style={styles.subtitle}>Todos los registros en este dispositivo</Text>
+          <Text style={styles.subtitle}>Operario: {username}</Text>
         </View>
         <TouchableOpacity
           style={styles.newBtn}
@@ -91,6 +93,12 @@ export default function LotesScreen() {
           />
         )}
       />
+
+      <View style={styles.footer}>
+        <TouchableOpacity onPress={logout} style={styles.logoutBtn}>
+          <Text style={styles.logoutText}>Salir</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -108,6 +116,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
   },
   newBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  logoutBtn: {
+    backgroundColor: '#334155', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
+  },
+  logoutText: { color: '#94a3b8', fontSize: 14, fontWeight: '600' },
   syncBanner: {
     backgroundColor: '#422006', borderLeftWidth: 3, borderLeftColor: '#f59e0b',
     paddingHorizontal: 20, paddingVertical: 12,
@@ -117,4 +129,11 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { color: '#94a3b8', fontSize: 16, fontWeight: '500' },
   emptyHint: { color: '#475569', fontSize: 13, marginTop: 6 },
+  footer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    backgroundColor: '#0f172a'
+  }
 });

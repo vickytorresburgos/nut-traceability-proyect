@@ -20,6 +20,10 @@ class Settings:
     OCR_SERVICE_PORT = os.getenv("OCR_SERVICE_PORT", "8081")
     API_KEY = os.getenv("API_KEY")
 
+    SECRET_KEY = os.getenv("SECRET_KEY", "7b095908b9816f5c8e03e5c9a7217578276f59b66249b6d91f8682662c5b058c")
+    ALGORITHM = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days for mobile app convenience
+
 settings = Settings()
 
 SQLALCHEMY_DATABASE_URL = f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"

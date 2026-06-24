@@ -1,6 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 export async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Consolidamos toda la creación en un solo bloque para evitar múltiples llamadas al puente nativo
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -21,6 +22,7 @@ export async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
       weight            TEXT,
       caliber_image_url TEXT,
       sha256_hash       TEXT,
+      operator_id       TEXT,
       created_at        TEXT NOT NULL,
       synced_at         TEXT
     );
@@ -54,9 +56,23 @@ export async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_queue_status ON sync_queue(status, attempt_count);
   `);
 
-  await db.runAsync(
-    `UPDATE nut_batches
-     SET trace_number = NULL
-     WHERE trace_number = '' OR trace_number LIKE 'TMP-%'`
-  );
+  // Ejecutamos la migración de la columna operator_id de forma aislada
+  // Solo si la tabla ya existía sin esa columna (fallback)
+  try {
+    const tableInfo = await db.getAllAsync<{name: string}>("PRAGMA table_info(nut_batches)");
+    const columnExists = tableInfo.some(col => col.name === 'operator_id');
+    
+    if (!columnExists) {
+      await db.execAsync("ALTER TABLE nut_batches ADD COLUMN operator_id TEXT;");
+    }
+  } catch (err) {
+    // Si falla porque la tabla es nueva (ya tiene la columna), simplemente ignoramos
+  }
+
+  // Mantenimiento de datos
+  try {
+    await db.execAsync("UPDATE nut_batches SET trace_number = NULL WHERE trace_number = '' OR trace_number LIKE 'TMP-%';");
+  } catch (e) {
+    // No crítico
+  }
 }
