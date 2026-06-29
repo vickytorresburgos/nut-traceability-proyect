@@ -82,12 +82,6 @@ class BlockchainService:
             )
 
         rpc_url = os.environ.get("BLOCKCHAIN_RPC_URL", "http://besu-node-1:8545")
-        
-        # Auto-corrección para entornos Docker: 
-        # Si estamos en Docker, preferimos conectarnos directamente al nombre del servicio 'besu-node-1'
-        if os.path.exists("/.dockerenv"):
-            if "localhost" in rpc_url or "127.0.0.1" in rpc_url or "host.docker.internal" in rpc_url:
-                rpc_url = "http://besu-node-1:8545"
 
         self._Web3 = Web3
         # Configurar timeout explícito de 10s — necesario en web3 v7
@@ -279,13 +273,6 @@ class BlockchainService:
 # ── Singleton ─────────────────────────────────────────────────────────────────
 _blockchain_service: Optional[BlockchainService] = None
 
-
-def get_blockchain_service() -> BlockchainService:
-    """Retorna el singleton de BlockchainService. Thread-safe para FastAPI."""
-    global _blockchain_service
-    if _blockchain_service is None:
-        _blockchain_service = BlockchainService()
-    return _blockchain_service
 
 
 def get_blockchain_service() -> BlockchainService:

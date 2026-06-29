@@ -2,7 +2,7 @@ import re
 import logging
 from core.schemas import RemitoData, OvenData, CaliberData
 from core.constants import CONFIDENCE_WARN_THRESHOLD, HUMIDITY_MAX
-from engine.vision import preprocess_document, preprocess_display, preprocess_handwritten
+from engine.vision import preprocess_document, preprocess_display, preprocess_handwritten, load_and_correct
 from engine.extraction import extract_text_document, _score_result
 from engine.business_logic import (
     _normalize_spaced_text, normalize_farm_name, _truncate_at_field_keyword,
@@ -13,43 +13,81 @@ from engine.business_logic import (
 logger = logging.getLogger("ocr-engine.pipeline")
 
 
+def _has_remito_keywords(text: str) -> bool:
+    """
+    Devuelve True si el texto contiene al menos una palabra clave de dominio.
+    Se usa como criterio de desempate en el cascade: si el ganador por score
+    no tiene ninguna keyword, el otro pipeline gana por contexto.
+    """
+    DOMAIN_KW = re.compile(
+        r'(?i)\b(finca|cosecha|fecha|horno|calibr|peso|remito|humedad|destino|producto)\b'
+    )
+    return bool(DOMAIN_KW.search(text))
+
+
 def _extract_best_from_paper(image_path: str) -> tuple[str, float]:
     """
-    Estrategia en cascada para documentos con texto impreso en papel
+    Estrategia de doble pipeline para documentos con texto impreso en papel
     (remito, calibre).
 
-    Tesseract en dos pipelines es suficiente y responde en ~5-8s.
+    Optimización: la imagen se carga y corrige (EXIF + perspectiva) UNA sola
+    vez con load_and_correct() y se pasa como array a ambas etapas, evitando
+    doble I/O y doble ejecución de _correct_perspective.
 
-    Etapa 1 — RÁPIDA (~2-4s):
-        preprocess_document + Tesseract [PSM 4, 6, 11]
-        Si conf >= CONFIDENCE_WARN_THRESHOLD (55%): retorna inmediatamente.
+    Selección en 2 pasos:
+      1. Score ponderado (_score_result: 60% confianza + 40% densidad de palabras).
+      2. Desempate por keywords de dominio: si el ganador por score NO contiene
+         ninguna keyword del formulario (finca, cosecha, fecha...), el otro pipeline
+         gana automáticamente. Esto previene el caso donde el OCR produce texto
+         basura con alto score de densidad pero sin campos útiles.
 
-    Etapa 2 — MEDIA (~+3s, solo si etapa 1 falló):
-        preprocess_handwritten + Tesseract [PSM 4, 6, 11]
-        Devuelve el mejor resultado entre etapa 1 y 2.
+    Etapa 1 (texto impreso):
+        preprocess_document (CLAHE + umbral adaptativo blockSize=41)
+        + Tesseract PSM 4 y PSM 6 siempre, PSM 11 si conf < 70%.
+        Optimizada para texto negro impreso, rápida (~2-4s).
+
+    Etapa 2 (texto manuscrito):
+        preprocess_handwritten (CLAHE clipLimit=3 + umbral blockSize=15)
+        + Tesseract PSM 4 y PSM 6 siempre, PSM 11 si conf < 70%.
+        Mejor para tinta de color (violeta/azul), formularios con campos
+        alineados de forma variable y texto en papel arrugado (~2-4s).
+
+    Total esperado: ~4-10s según complejidad de la imagen.
     """
-    # ── Etapa 1: pipeline rápido (texto impreso) ──────────────────────────
-    doc_img = preprocess_document(image_path)
+    # ── Pre-carga única: EXIF + perspectiva (evita doble trabajo en cascade) ─
+    base_img = load_and_correct(image_path)
+
+    # ── Etapa 1: pipeline impreso ──────────────────────────────────────────────
+    doc_img = preprocess_document(base_img)
     doc_text, doc_conf = extract_text_document(doc_img)
-    logger.info(f"[CASCADE-1] Impreso: conf={doc_conf:.1f}%")
+    doc_score = _score_result(doc_text, doc_conf)
+    doc_has_kw = _has_remito_keywords(doc_text)
+    logger.info(f"[CASCADE-1] Impreso: conf={doc_conf:.1f}% | score={doc_score:.1f} | kw={doc_has_kw}")
 
-    if doc_conf >= CONFIDENCE_WARN_THRESHOLD:
-        logger.info("[CASCADE] Etapa 1 suficiente, saltando manuscrito.")
-        return doc_text, doc_conf
-
-    # ── Etapa 2: pipeline manuscrito (solo si etapa 1 fue insuficiente) ───
-    logger.info("[CASCADE-2] Confianza baja, probando pipeline manuscrito...")
-    hw_img = preprocess_handwritten(image_path)
+    # ── Etapa 2: pipeline manuscrito (siempre) ─────────────────────────────────
+    hw_img = preprocess_handwritten(base_img)
     hw_text, hw_conf = extract_text_document(hw_img)
-    logger.info(f"[CASCADE-2] Manuscrito: conf={hw_conf:.1f}%")
+    hw_score = _score_result(hw_text, hw_conf)
+    hw_has_kw = _has_remito_keywords(hw_text)
+    logger.info(f"[CASCADE-2] Manuscrito: conf={hw_conf:.1f}% | score={hw_score:.1f} | kw={hw_has_kw}")
 
-    # Devolver el mejor entre etapa 1 y 2
-    if _score_result(hw_text, hw_conf) > _score_result(doc_text, doc_conf):
-        logger.info(f"[CASCADE] Manuscrito ganó: {hw_conf:.1f}% > {doc_conf:.1f}%")
+    # ── Selección: score + desempate por keywords ──────────────────────────────
+    # Caso 1: solo uno tiene keywords → ese gana sin importar el score
+    if doc_has_kw and not hw_has_kw:
+        logger.info(f"[CASCADE] Impreso ganó por keywords exclusivas")
+        return doc_text, doc_conf
+    if hw_has_kw and not doc_has_kw:
+        logger.info(f"[CASCADE] Manuscrito ganó por keywords exclusivas")
         return hw_text, hw_conf
 
-    logger.info(f"[CASCADE] Impreso ganó: {doc_conf:.1f}% >= {hw_conf:.1f}%")
+    # Caso 2: ambos tienen keywords (o ninguno) → elegir por score
+    if hw_score > doc_score:
+        logger.info(f"[CASCADE] Manuscrito ganó (score {hw_score:.1f} > {doc_score:.1f})")
+        return hw_text, hw_conf
+
+    logger.info(f"[CASCADE] Impreso ganó (score {doc_score:.1f} >= {hw_score:.1f})")
     return doc_text, doc_conf
+
 
 
 def process_remito_image(image_path: str) -> RemitoData:
@@ -64,17 +102,25 @@ def process_remito_image(image_path: str) -> RemitoData:
     confidence_alert = confidence < CONFIDENCE_WARN_THRESHOLD
 
     FIELD_BOUNDARY = r'(?=\r|\n|fecha|cosecha|horno|peso|calibre|$)'
-    FINCA_KW = r'f\s*[i1]\s*n\s*c\s*a'
+    # Keyword FINCA tolerante a:
+    #   - letras faltantes al final: 'Finc', 'Fin'
+    #   - sustitución OCR c→u: 'Fiuca', 'Fiuca'
+    #   - espaciado entre letras: 'F i n c a' (ya resuelto por _normalize_spaced_text)
+    FINCA_KW = r'f(?:\s*[i1]\s*[nu]\s*[ck](?:\s*a)?|\s*[i1]\s*n\s*c\s*a?)'
 
     farm_name = None
 
+    # ── Estrategia 1: buscar keyword 'Finca' (y variantes OCR) ───────────────
     for text_candidate in [raw_text_norm, raw_text]:
         farm_sec = re.search(
             rf'(?i){FINCA_KW}[:\s]*(.*?){FIELD_BOUNDARY}',
             text_candidate
         )
         if farm_sec:
-            raw_farm = farm_sec.group(1).strip()[:60].upper()
+            # Limitar a 3 palabras: el OCR puede duplicar el nombre (ej: "La Cabañi La
+            # Caboña" en lugar de "La Cabaña"), generando empates falsos en el matcher.
+            captured = farm_sec.group(1).strip()
+            raw_farm = ' '.join(captured.split()[:3])[:60].upper()
             raw_farm = raw_farm.translate(str.maketrans('0123456789', 'OLZSASGTBG'))
             cleaned = re.sub(r'[^A-Z\sÑÁÉÍÓÚÜ]', '', raw_farm).strip()
             logger.info(f"[FINCA-KW] candidato tras keyword: '{cleaned}'")
@@ -82,6 +128,7 @@ def process_remito_image(image_path: str) -> RemitoData:
             if farm_name:
                 break
 
+    # ── Estrategia 2: fallback por primer ':' del texto ───────────────────────
     if not farm_name:
         logger.info("[FINCA-COLON] Buscando finca por primer ':' del texto...")
         first_colon = raw_text_norm.find(':')
@@ -89,14 +136,40 @@ def process_remito_image(image_path: str) -> RemitoData:
             after_colon = raw_text_norm[first_colon + 1:].strip()
             truncated = _truncate_at_field_keyword(after_colon)
             if truncated:
-                raw_farm = truncated[:60].upper()
+                # Limitar a 3 palabras por la misma razón que en FINCA-KW
+                raw_farm = ' '.join(truncated.split()[:3])[:60].upper()
                 raw_farm = raw_farm.translate(str.maketrans('0123456789', 'OLZSASGTBG'))
                 cleaned = re.sub(r'[^A-Z\sÑÁÉÍÓÚÜ]', '', raw_farm).strip()
                 logger.info(f"[FINCA-COLON] candidato: '{cleaned}'")
                 farm_name = normalize_farm_name(cleaned)
 
-    harvest_type = _find_harvest_type_fuzzy(raw_text_norm)
-    date = extract_date(raw_text_norm)
+    # ── Estrategia 3: escanear líneas buscando nombre de finca conocida ───────
+    # Cubre el caso donde no hay keyword 'Finca' en el texto (ej. baja confianza
+    # OCR que omite la etiqueta del campo pero lee el valor correctamente).
+    if not farm_name:
+        logger.info("[FINCA-LINE] Buscando finca por scan de líneas...")
+        for line in raw_text_norm.split('\n'):
+            line_clean = line.strip()
+            if not line_clean:
+                continue
+            # Saltar líneas que son claramente campos-etiqueta conocidos
+            if re.match(r'(?i)^(remito|fecha|cosecha|horno|peso|calibre|producto|cantidad|destino|firma)', line_clean):
+                continue
+            raw_farm = ' '.join(line_clean.split()[:3])[:60].upper()
+            raw_farm = raw_farm.translate(str.maketrans('0123456789', 'OLZSASGTBG'))
+            cleaned = re.sub(r'[^A-Z\sÑÁÉÍÓÚÜ]', '', raw_farm).strip()
+            if len(cleaned) < 3:
+                continue
+            candidate = normalize_farm_name(cleaned)
+            if candidate:
+                logger.info(f"[FINCA-LINE] Finca encontrada en línea: '{candidate}'")
+                farm_name = candidate
+                break
+
+    # ── Extracción de tipo de cosecha y fecha ─────────────────────────────────
+    # Se intenta sobre el texto normalizado primero, y raw como fallback.
+    harvest_type = _find_harvest_type_fuzzy(raw_text_norm) or _find_harvest_type_fuzzy(raw_text)
+    date = extract_date(raw_text_norm) or extract_date(raw_text)
 
     return RemitoData(
         raw_text=raw_text,
@@ -117,11 +190,14 @@ def process_oven_image(image_path: str) -> OvenData:
     errors: list[str] = []
 
     oven_id = None
-    oven_sec = re.search(r'(?i)ho?r[nh]o?[^\d]*(\d+)', raw_text)
+    # Permite espacios o saltos de línea entre dígitos: Tesseract a veces lee "1 \n 0"
+    # en lugar de "10". El lookahead negativo evita que se fusione con la humedad (ej: 5.1%)
+    # limitando la captura si el siguiente número tiene decimales o signo %.
+    oven_sec = re.search(r'(?i)ho?r[nh]o?[^\d]*(\d[\s\.]*\d?)(?!\s*[\.,]\s*\d|\s*%)', raw_text)
     if not oven_sec:
-        oven_sec = re.search(r'(?i)h[o0]r[^\d]*(\d+)', raw_text)
+        oven_sec = re.search(r'(?i)h[o0]r[^\d]*(\d[\s\.]*\d?)(?!\s*[\.,]\s*\d|\s*%)', raw_text)
     if oven_sec:
-        raw_oven = oven_sec.group(1)
+        raw_oven = re.sub(r'[\s\.]', '', oven_sec.group(1))  # "1 \n 0" → "10"
         oven_id, oven_err = validate_oven_id(raw_oven)
         if oven_err:
             errors.append(oven_err)

@@ -1,5 +1,8 @@
-CONFIDENCE_REJECT_THRESHOLD = 35.0   # antes: 20.0  — umbral para rechazar con HTTP 400
-CONFIDENCE_WARN_THRESHOLD   = 55.0   # antes: 40.0  — umbral para activar confidence_alert
+CONFIDENCE_REJECT_THRESHOLD = 20.0   # umbral para rechazar con HTTP 400 (imagen ilegible)
+CONFIDENCE_WARN_THRESHOLD   = 30.0   # umbral para activar confidence_alert en la app
+                                      # Remitos con tinta manuscrita violeta puntúan 55-65%
+                                      # (límite real de Tesseract para ese tipo de tinta),
+                                      # no es baja calidad — no debe disparar la alerta.
 
 KNOWN_FARMS = [
     'LOS TILOS', 'LAS FLORES', 'LOS ANDES', 'LOS CAPOS',

@@ -40,5 +40,6 @@ COPY . .
 EXPOSE 8081
 
 # 2 workers: aprovecha múltiples cores para atender requests concurrentes
+ENV OMP_THREAD_LIMIT=1
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081", \
     "--workers", "2", "--timeout-keep-alive", "75"]

@@ -122,7 +122,6 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     networks:
       - internal
-      - public
     depends_on:
       nut-api:
         condition: service_healthy

@@ -13,7 +13,7 @@ def normalize_farm_name(raw_name: str) -> str | None:
     result = fuzz_process.extractOne(
         raw_upper,
         KNOWN_FARMS,
-        scorer=fuzz.WRatio,
+        scorer=fuzz.token_sort_ratio,
         score_cutoff=65
     )
     if result:
@@ -73,7 +73,7 @@ def normalize_caliber(raw_cal: str) -> str | None:
         elif val <= 30:  return '28-30'
         elif val <= 32:  return '30-32'
         elif val <= 34:  return '32-34'
-        elif val <= 36:  return '34-36'
+        elif val < 36:   return '34-36'   # FIX: val==36 exacto → '36+', no '34-36'
         else:            return '36+'
 
     result = fuzz_process.extractOne(
@@ -88,24 +88,88 @@ def normalize_caliber(raw_cal: str) -> str | None:
 
     return None
 
+def _collapse_spaced_line(line: str) -> str:
+    """
+    Pre-colapsa líneas donde Tesseract PSM-4 espació cada letra individualmente.
+
+    Cuando el OCR genera 'F i n c a: L a C a b a ñ a', esta función detecta
+    que la mayoría de tokens son chars individuales y los une en palabras.
+    No modifica líneas con palabras normales de >1 char para no introducir
+    errores en texto ya correcto.
+
+    Preserva separadores ':' y '/' adjuntos a las letras.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return line
+    tokens = stripped.split()
+    if len(tokens) < 3:
+        return line
+
+    # Contar tokens de 1 caracter alfanumérico (letras y dígitos, incl. acentuados)
+    single_char_count = sum(
+        1 for t in tokens
+        if len(re.sub(r'[^A-Za-z0-9áéíóúüñÁÉÍÓÚÜÑ]', '', t)) == 1
+    )
+    if single_char_count / len(tokens) < 0.6:
+        return line  # línea normal, no modificar
+
+    result = []
+    current_word: list[str] = []
+    for token in tokens:
+        m = re.match(r'^([A-Za-z0-9áéíóúüñÁÉÍÓÚÜÑ]*)([^A-Za-z0-9áéíóúüñÁÉÍÓÚÜÑ]*)', token)
+        alpha = m.group(1) if m else token
+        suffix = m.group(2) if m else ''
+
+        if len(alpha) == 1:
+            current_word.append(alpha)
+            if suffix:  # separador ':' cierra la palabra actual
+                result.append(''.join(current_word) + suffix)
+                current_word = []
+        else:
+            if current_word:
+                result.append(''.join(current_word))
+                current_word = []
+            result.append(token)
+    if current_word:
+        result.append(''.join(current_word))
+
+    return ' '.join(result)
+
+
 def _normalize_spaced_text(text: str) -> str:
+    """
+    Normaliza artefactos de espaciado del OCR en dos pasadas:
+
+    1. _collapse_spaced_line: detecta líneas donde PSM-4 espació cada letra
+       ('F i n c a:') y las colapsa a palabras normales ('Finca:').
+
+    2. Regex de colapso de runs: elimina el espacio entre chars individuales
+       consecutivos que quedaron tras la primera pasada (ej: 'L aC a b a ñ a'
+       → 'LaCabaña'). El fuzzy matcher de finca tolera el pegado.
+    """
     result_lines = []
     for line in text.split('\n'):
         stripped = line.strip()
         if not stripped:
             result_lines.append(line)
             continue
-        tokens = stripped.split()
+
+        # Pasada 1: colapsar líneas completamente espaciadas (PSM-4)
+        line_processed = _collapse_spaced_line(stripped)
+        tokens = line_processed.split()
+
+        # Pasada 2: colapsar runs residuales de chars individuales
         single_char = sum(1 for t in tokens if len(t) == 1 and t.isalpha())
         if len(tokens) > 2 and single_char / len(tokens) >= 0.5:
             collapsed = re.sub(
                 r'(?<![\w:])([A-ZÑÁÉÍÓÚÜa-záéíóú]) (?=[A-ZÑÁÉÍÓÚÜa-záéíóú](?: |$))',
                 r'\1',
-                stripped
+                line_processed
             )
             result_lines.append(collapsed)
         else:
-            result_lines.append(line)
+            result_lines.append(line_processed)
     return '\n'.join(result_lines)
 
 def clean_ocr_number_section(sec_text: str, remove_word: str) -> str:
@@ -114,25 +178,69 @@ def clean_ocr_number_section(sec_text: str, remove_word: str) -> str:
     sec_text = sec_text.upper().translate(str.maketrans('OILZSABGT', '011254867'))
     return sec_text.strip()
 
-def extract_date(raw_text: str) -> str | None:
-    m = re.search(r'(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})', raw_text)
-    if m:
-        day, month, year = m.group(1), m.group(2), m.group(3)
-        if len(year) == 2:
-            year = f"20{year}"
-        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+# Tabla de sustituciones comunes de Tesseract en dígitos del año
+_OCR_DIGIT_FIX = str.maketrans('ZzIiOoSsBbGgTt', '22110055887766')
 
-    m = re.search(
-        r'(\d{1,2})\s+(?:de\s+)?(' + '|'.join(MESES_ES.keys()) + r')\s+(?:de\s+)?(\d{2,4})',
-        raw_text, re.IGNORECASE
+
+def _fix_ocr_year(year_str: str) -> str:
+    """Corrige sustituciones OCR comunes en el año: Z→2, I→1, O→0, etc."""
+    return year_str.translate(_OCR_DIGIT_FIX)
+
+
+def extract_date(raw_text: str) -> str | None:
+    # Paso 0: colapsar espacios entre dígitos que PSM-4 introduce en fechas.
+    # '2 0/0 1/2 0 2 4' necesita múltiples pasadas para → '20/01/2024'.
+    pre_cleaned = raw_text
+    for _ in range(6):  # máx 6 iteraciones para cubrir números de 4 dígitos
+        new = re.sub(r'(\d)\s+(\d)', r'\1\2', pre_cleaned)
+        if new == pre_cleaned:
+            break
+        pre_cleaned = new
+
+    # Normalizar sustituciones OCR en letras que parecen dígitos (Z→2, I→1, O→0)
+    # Solo en el contexto de posibles años (4 chars alfanuméricos tras separador)
+    cleaned = re.sub(
+        r'(?<=[/\-\.\s])([A-Za-z0-9]{2,4})(?=[/\-\.\s]|$)',
+        lambda m: m.group(0).translate(_OCR_DIGIT_FIX),
+        pre_cleaned
     )
-    if m:
-        day = m.group(1).zfill(2)
-        month = MESES_ES.get(m.group(2).lower(), '??')
-        year = m.group(3)
-        if len(year) == 2:
-            year = f"20{year}"
-        return f"{year}-{month}-{day}"
+    # También al final de línea para años tipo 'Z024'
+    cleaned = re.sub(
+        r'(20[0-9ZzIiOoSs]{2})(?!\d)',
+        lambda m: m.group(0).translate(_OCR_DIGIT_FIX),
+        cleaned
+    )
+
+    # 1. Patrón con separadores explícitos (soporta años de 2 y 4 dígitos)
+    regex1 = r'(?<!\d)(0?[1-9]|[12][0-9]|3[01])[/\-\.\s7lI]+(0?[1-9]|1[0-2])[/\-\.\s7lI]+(20\d{2}|\d{2})(?!\d)'
+    # 2. Patrón con separadores opcionales, exige año de 4 dígitos para evitar falsos positivos
+    regex2 = r'(?<!\d)(0?[1-9]|[12][0-9]|3[01])[/\-\.\s7lI]*(0?[1-9]|1[0-2])[/\-\.\s7lI]*(20\d{2})(?!\d)'
+    # 3. Fallback para años de 2 dígitos sin separadores
+    regex3 = r'(?<!\d)(0?[1-9]|[12][0-9]|3[01])[/\-\.\s7lI]*(0?[1-9]|1[0-2])[/\-\.\s7lI]*(\d{2})(?!\d)'
+
+    for text_candidate in [cleaned, raw_text]:
+        m = re.search(regex1, text_candidate) or re.search(regex2, text_candidate) or re.search(regex3, text_candidate)
+        if m:
+            day, month, year = m.group(1), m.group(2), m.group(3)
+            year = _fix_ocr_year(year)  # corregir Z024 → 2024
+            if len(year) == 2:
+                year = f"20{year}"
+            if 1 <= int(day) <= 31 and 1 <= int(month) <= 12:
+                return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+    # Patrón texto: "20 de enero de 2024" / "20 enero 2024"
+    for text_candidate in [cleaned, raw_text]:
+        m = re.search(
+            r'(\d{1,2})\s+(?:de\s+)?(' + '|'.join(MESES_ES.keys()) + r')\s+(?:de\s+)?(\d{2,4})',
+            text_candidate, re.IGNORECASE
+        )
+        if m:
+            day = m.group(1).zfill(2)
+            month = MESES_ES.get(m.group(2).lower(), '??')
+            year = _fix_ocr_year(m.group(3))
+            if len(year) == 2:
+                year = f"20{year}"
+            return f"{year}-{month}-{day}"
 
     return None
 
@@ -155,29 +263,42 @@ def _truncate_at_field_keyword(value: str) -> str:
     return ' '.join(result).strip()
 
 def _find_harvest_type_fuzzy(raw_text: str) -> str | None:
-    if re.search(r'(?i)maquin|maquil|mecanic|mecan[ií]', raw_text):
+    if re.search(r'(?i)mecanic|mecan[ií]', raw_text):
         return 'mecanica'
     if re.search(r'(?i)\bmanual\b|\bmanua\b', raw_text):
         return 'manual'
 
     HARVEST_MAP = {
-        'MAQUINA': 'mecanica',
         'MECANICA': 'mecanica',
         'MANUAL':   'manual',
     }
-    tokens = re.findall(r'[A-Za-z0-9]{2,}', raw_text)
+    tokens = re.findall(r'[A-Za-zÁÉÍÓÚáéíóúÑñ0-9]{2,}', raw_text)
     candidates = list(tokens) + [''.join(tokens[i:i+2]) for i in range(len(tokens) - 1)]
+
+    best_match = None
+    best_score = -1
 
     for candidate in candidates:
         c_alpha = re.sub(r'[0-9]', '', candidate).upper()
-        if len(c_alpha) < 3:
+        # Eliminar tildes para no perjudicar el score
+        c_alpha = c_alpha.translate(str.maketrans('ÁÉÍÓÚ', 'AEIOU'))
+        
+        if len(c_alpha) < 4:
             continue
-        for target, harvest_val in HARVEST_MAP.items():
-            score = fuzz.partial_ratio(c_alpha, target)
-            if score >= 72:
-                logger.info(
-                    f"[HARVEST-FUZZY] '{c_alpha}' \u2248 '{target}' "
-                    f"(partial_ratio={score}) -> {harvest_val}"
-                )
-                return harvest_val
+            
+        result = fuzz_process.extractOne(
+            c_alpha, list(HARVEST_MAP.keys()),
+            scorer=fuzz.partial_ratio,
+            score_cutoff=72
+        )
+        if result:
+            match_str, score, _ = result
+            if score > best_score:
+                best_score = score
+                best_match = HARVEST_MAP[match_str]
+                
+    if best_match:
+        logger.info(f"[HARVEST-FUZZY] Ganador con score {best_score} -> {best_match}")
+        return best_match
+        
     return None

@@ -10,8 +10,12 @@ import Constants from 'expo-constants';
  */
 function getApiUrl(): string {
   // 1. Variable de entorno explícita (producción o override manual)
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
+  let envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl) {
+    if (!envUrl.startsWith('http://') && !envUrl.startsWith('https://')) {
+      envUrl = `http://${envUrl}`;
+    }
+    return envUrl;
   }
 
   // 2. En desarrollo, Expo expone la IP del host mediante hostUri (ej: "192.168.x.x:8081")

@@ -55,23 +55,48 @@ def _run_ocr(image: np.ndarray, psm: int) -> tuple[str, float]:
         return "", 0.0
 
 
+EARLY_EXIT_CONF = 70.0  # Umbral para omitir PSM 11 si el resultado ya es suficientemente bueno
+
+
 def extract_text_document(image: np.ndarray) -> tuple[str, float]:
     """
-    Extrae texto con múltiples PSMs y elige el mejor usando puntaje ponderado.
-    PSMs usados: [4, 6, 11].
-      - PSM 4:  columna de texto variable (bueno para remitos con campos)
-      - PSM 6:  bloque uniforme de texto (el más rápido para texto corrido)
-      - PSM 11: texto disperso (bueno para formularios con campos separados)
+    Extrae texto combinando PSM 4 y PSM 6 siempre, con PSM 11 opcional.
+
+    Estrategia de segmentación:
+      - PSM 4  (columna variable): detecta campos etiquetados en formularios,
+        incluyendo valores alineados a la derecha como "Fecha:". SIEMPRE corre.
+      - PSM 6  (bloque uniforme): rápido para texto corrido impreso. SIEMPRE corre.
+      - PSM 11 (texto disperso): cubre campos muy separados. Solo si mejor resultado
+        < EARLY_EXIT_CONF (70%). Es más lento y propenso a ruido.
+
+    PSM 4 y PSM 6 son complementarios: PSM 6 solo puede ignorar campos que no
+    están en un bloque continuo (ej: "Fecha:" en el header de un remito alineado
+    a la derecha). Ejecutar ambos y tomar el mejor cubre la mayoría de layouts.
+
+    El mejor resultado se elige por score ponderado (conf 60% + cantidad de
+    palabras significativas 40%), no solo por confianza.
     """
     best_text, best_conf, best_score = "", 0.0, -1.0
-    for psm in [4, 6, 11]:
+
+    # Fase 1: siempre ejecutar PSM 4 y PSM 6 (complementarios para formularios)
+    for psm in [4, 6]:
         text, conf = _run_ocr(image, psm)
         score = _score_result(text, conf)
         logger.debug(f"[PSM {psm}] conf={conf:.1f}% | words={len(text.split())} | score={score:.1f}")
         if score > best_score:
             best_text, best_conf, best_score = text, conf, score
 
-    logger.debug(f"[TESSERACT] Mejor resultado: conf={best_conf:.1f}% | score={best_score:.1f}")
+    # Fase 2: PSM 11 solo si el mejor resultado aún es insuficiente
+    if best_conf < EARLY_EXIT_CONF:
+        text, conf = _run_ocr(image, 11)
+        score = _score_result(text, conf)
+        logger.debug(f"[PSM 11] conf={conf:.1f}% | words={len(text.split())} | score={score:.1f}")
+        if score > best_score:
+            best_text, best_conf, best_score = text, conf, score
+    else:
+        logger.debug(f"[TESSERACT] PSM 11 omitido (mejor conf={best_conf:.1f}% ≥ {EARLY_EXIT_CONF}%)")
+
+    logger.debug(f"[TESSERACT] Resultado final: conf={best_conf:.1f}% | score={best_score:.1f}")
     return best_text, best_conf
 
 
